@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authorization-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Sentinel retirement
+        run: |
+          # Bootstrap CI scans a sentinel directory because no runtime exists
+          # yet. The moment src/ lands, this workflow must be replaced by the
+          # runtime CI that scans src/ — a required check that silently passes
+          # on the wrong root would attest falsely.
+          if [ -d src ]; then
+            echo "::error title=sentinel-retirement::src/ exists — replace bootstrap CI with runtime CI scanning src/" >&2
+            exit 1
+          fi
+      - name: Authorization boundary guard
+        run: |
+          mkdir -p .guard-bootstrap
+          python tools/guards/authorization_boundary.py .guard-bootstrap --format github
+
+  workflow-hardening:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Install guard dependencies
+        run: python -m pip install --quiet pyyaml
+      - name: Workflow hardening guard
+        run: python tools/guards/workflow_hardening.py .github/workflows
+
+  guard-self-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install --quiet pytest pyyaml
+      - name: Guard self-tests
+        run: python -m pytest tests/guards -q
