@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/review-telemetry-event.schema.json",
+  "title": "ReviewTelemetryEvent",
+  "description": "Append-only shadow-telemetry record for one Faraday Review run (Phase 1.11), including founder adjudication when recorded. Adjudication matching is on the founder's immutable account node_id, never on login; non-founder labels are rejected and logged as adjudication_rejected. No model cost fields exist in Phase 1 — there is no model. Secret values never appear in any field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "review_id",
+    "fingerprint",
+    "repository",
+    "pr_number",
+    "base_sha",
+    "head_sha",
+    "final_status",
+    "created_at"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "review_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$"
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Idempotency fingerprint: canonical digest over ordered inputs; contains no timestamp."
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "reviewer_version": { "type": "string", "minLength": 1 },
+    "evidence_class": {
+      "type": "string",
+      "enum": ["deterministic", "mixed"]
+    },
+    "deterministic_finding_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["info", "warning", "blocking"],
+      "properties": {
+        "info": { "type": "integer", "minimum": 0 },
+        "warning": { "type": "integer", "minimum": 0 },
+        "blocking": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "risk_class": {
+      "type": "string",
+      "enum": ["green", "yellow", "red", "block"]
+    },
+    "approval_authorized": { "type": "boolean" },
+    "merge_authorized": { "type": "boolean" },
+    "founder_review_required": { "type": "boolean" },
+    "blocking_reasons": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
+    },
+    "stale_state": {
+      "type": "string",
+      "enum": ["fresh", "stale_before_validation", "stale_before_publication"]
+    },
+    "duration_seconds": { "type": "number", "minimum": 0 },
+    "github_requests_used": { "type": "integer", "minimum": 0 },
+    "retries": { "type": "integer", "minimum": 0 },
+    "failure_mode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "description": "Present only when final_status is 'failed'."
+    },
+    "final_status": {
+      "type": "string",
+      "enum": ["completed", "failed"]
+    },
+    "founder_classification": {
+      "type": "string",
+      "enum": ["green", "yellow", "red", "block"],
+      "description": "Written by a faraday/founder-<class> label applied by the founder account for this head SHA."
+    },
+    "founder_classification_at": { "type": "string", "format": "date-time" },
+    "agreement": {
+      "type": "boolean",
+      "description": "Computed: risk_class == founder_classification."
+    },
+    "adjudicated_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id"],
+      "properties": {
+        "node_id": { "type": "string", "minLength": 1 },
+        "login": { "type": "string", "minLength": 1 }
+      },
+      "description": "Immutable account node_id captured during discovery; login is informational only."
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

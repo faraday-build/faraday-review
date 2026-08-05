@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/founder-escalation.schema.json",
+  "title": "FounderEscalation",
+  "description": "Escalation record produced when a governed PR requires founder review (Faraday Review Phase 1). `reasons` distinguishes real, expected escalations (e.g. pr_too_large_for_deterministic_classification) from infrastructure faults (github_api_budget_exceeded) so that calibration data for Phase 2 is not poisoned by misclassified infrastructure noise (Correction 2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "repository",
+    "pr_number",
+    "head_sha",
+    "reasons",
+    "escalated_at"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "reasons": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "description": "Sorted lexicographically by the producer; a list, never a set."
+    },
+    "risk_class": {
+      "type": "string",
+      "enum": ["green", "yellow", "red", "block"]
+    },
+    "evidence_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "escalated_at": { "type": "string", "format": "date-time" }
+  }
+}

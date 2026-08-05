@@ -1,0 +1,61 @@
+# Faraday Review — approval policy (Phase 1: deterministic enforcement plane)
+#
+# Authority invariant: Governance defines policy. Validator authorizes.
+# GitHub enforces. Founder handles exceptions.
+#
+# Phase 1 authorizes nothing: approval_authorized and merge_authorized are
+# false for every class (schema-pinned as const). Calibrated Green approval
+# is Phase 3, gated on Phase 2 calibration data; auto-merge is Phase 4 and
+# requires separate founder ratification. Either change ships as a new
+# policy_version AND a new policy.schema.json.
+
+policy_version: "1.0.0"
+authority: "faraday-capital-systems/faraday-governance"
+consumer: "faraday-build/faraday-review"
+
+risk_classes:
+  green:
+    description: >-
+      Docs- or test-only change: no protected path matched, all required
+      checks present and passing, no blocking condition fired.
+    approval_authorized: false
+    merge_authorized: false
+    founder_review_required: false
+  yellow:
+    description: >-
+      Business-logic or dependency change without protected paths. Escalates
+      to the founder; recurring Yellow causes feed docs/PHASE_2_INPUTS.md.
+    approval_authorized: false
+    merge_authorized: false
+    founder_review_required: true
+  red:
+    description: >-
+      Touches a protected governance or workflow path. Always founder review.
+    approval_authorized: false
+    merge_authorized: false
+    founder_review_required: true
+  block:
+    description: >-
+      A blocking condition fired. Fail closed; founder review required.
+    approval_authorized: false
+    merge_authorized: false
+    founder_review_required: true
+
+# Every condition the deterministic plane may emit as a blocking_reason.
+# The two escalation reasons for size/budget are distinct on purpose
+# (Correction 2): pr_too_large is a real, expected escalation; budget
+# exhaustion within pr_limits is an infrastructure fault to page on.
+block_conditions:
+  - contract_version_unsupported
+  - evidence_malformed
+  - evidence_stale
+  - github_api_budget_exceeded
+  - policy_digest_mismatch
+  - policy_digest_unpinned
+  - policy_missing
+  - policy_version_unsupported
+  - pr_too_large_for_deterministic_classification
+  - required_check_failing
+  - required_check_missing
+  - secret_detected
+  - unknown_evidence_class

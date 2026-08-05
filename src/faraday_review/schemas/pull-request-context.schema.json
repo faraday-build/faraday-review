@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/pull-request-context.schema.json",
+  "title": "PullRequestContext",
+  "description": "Snapshot of one pull request as observed by the Faraday Review deterministic plane (Phase 1). Input to `faraday-validator evaluate-pr`. SHAs are full 40-hex lowercase; producers normalize case before writing, and validators reject short or mixed-case values rather than coercing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "repository",
+    "pr_number",
+    "base_sha",
+    "head_sha",
+    "collected_at"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "agent-contracts release this payload was written against."
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+      "description": "owner/repo"
+    },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "base_ref": { "type": "string", "minLength": 1 },
+    "head_ref": { "type": "string", "minLength": 1 },
+    "draft": { "type": "boolean" },
+    "changed_file_count": { "type": "integer", "minimum": 0 },
+    "diff_bytes": { "type": "integer", "minimum": 0 },
+    "changed_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "status"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "status": {
+            "type": "string",
+            "enum": ["added", "modified", "removed", "renamed", "copied", "changed", "unchanged"]
+          },
+          "previous_path": { "type": "string", "minLength": 1 },
+          "additions": { "type": "integer", "minimum": 0 },
+          "deletions": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "required_checks_observed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context", "state"],
+        "properties": {
+          "context": { "type": "string", "minLength": 1 },
+          "state": {
+            "type": "string",
+            "enum": ["success", "failure", "pending", "error", "missing"]
+          }
+        }
+      },
+      "description": "Check contexts observed at collection time. 'missing' records a policy-required check with no run on the head SHA."
+    },
+    "collected_at": { "type": "string", "format": "date-time" }
+  }
+}

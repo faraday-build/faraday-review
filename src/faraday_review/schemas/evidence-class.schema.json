@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/evidence-class.schema.json",
+  "title": "EvidenceClass",
+  "description": "Classification of a PullRequestReviewEvidence payload (Faraday Review Phase 1). 'deterministic' — evidence contains only deterministic findings. 'mixed' — evidence contains deterministic findings plus provider results (Phase 2). The enum ships complete in Phase 1 so Phase 2 changes a value, not the schema: no enum migration, no contract bump. 'model' is deliberately absent and must not be added — a governed decision always includes deterministic checks (required-check status, SHA freshness, protected paths, secrets), so pure-model evidence is not a legitimate artifact. Validators must additionally check received values against a hardcoded runtime allowlist (belt-and-braces against N-1 schema drift under the N/N-1 acceptance rule) and fail closed on unknown values with no default, no coercion, and no case normalization.",
+  "type": "string",
+  "enum": ["deterministic", "mixed"]
+}

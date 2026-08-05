@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/deterministic-finding.schema.json",
+  "title": "DeterministicFinding",
+  "description": "One finding emitted by a deterministic check in the Faraday Review plane (Phase 1). Findings carry no authorization semantics — classification into green/yellow/red/block is the Validator's alone. For secret_scan findings, `message` and every other field MUST NOT contain the matched secret value: only rule id, path, line, and rule class/entropy metadata are permitted (Correction 3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rule_id", "check", "severity", "message"],
+  "properties": {
+    "rule_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "Stable identifier of the rule that fired (e.g. gitleaks rule id, protected-path pattern id)."
+    },
+    "check": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "description": "Deterministic check that produced the finding (e.g. protected_paths, required_checks, secret_scan, pr_limits, freshness)."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["info", "warning", "blocking"]
+    },
+    "path": { "type": "string", "minLength": 1 },
+    "line": { "type": "integer", "minimum": 1 },
+    "rule_class": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Rule class or entropy descriptor. For secrets: the detector rule class, never the matched value."
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable summary. MUST NOT contain secret values."
+    }
+  }
+}

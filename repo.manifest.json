@@ -1,0 +1,34 @@
+{
+  "repo_name": "faraday-review",
+  "repo_type": "standard",
+  "lifecycle_stage": "phase-1",
+  "lifecycle_state": "active",
+  "production_status": "shadow",
+  "domain": "governance",
+  "purpose": "Deterministic PR enforcement plane: exact-SHA freshness, pinned policy digest verification, protected-path classification, required-check verification, secret detection, deterministic evaluate-pr, founder escalation, shadow telemetry. No model inference in Phase 1.",
+  "dependencies": [
+    "tomrivera-ops/agent-contracts@v0.3.0",
+    "faraday-capital-systems/faraday-governance@v1.1.0"
+  ],
+  "allowed_agent_actions": [
+    "documentation",
+    "summaries",
+    "schema-drafting",
+    "local-only-scaffolding",
+    "architecture-reviews"
+  ],
+  "blocked_agent_actions": [
+    "deployments",
+    "production-changes",
+    "secret-handling",
+    "autonomous-execution",
+    "unsupervised-repo-modification",
+    "bypassing-review",
+    "pr-approval",
+    "pr-merge"
+  ],
+  "requires_human_review": true,
+  "owner": "tom-rivera",
+  "priority": "critical",
+  "status": "phase-1-deterministic-plane"
+}
