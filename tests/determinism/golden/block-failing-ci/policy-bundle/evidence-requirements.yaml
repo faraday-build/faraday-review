@@ -1,0 +1,41 @@
+# Faraday Review — evidence requirements (Phase 1)
+#
+# The Validator enforces these against every PullRequestReviewEvidence
+# payload before classification. All violations are Block conditions.
+
+policy_version: "1.0.0"
+
+evidence_contract: "pull-request-review-evidence"
+contracts_source: "tomrivera-ops/agent-contracts"
+minimum_contract_version: "v0.3.0"
+# Ruling 16: the Validator accepts contract minor N and N-1 and records
+# which it evaluated. Anything older is contract_version_unsupported.
+accepted_contract_minors_back: 1
+
+# Belt-and-braces: schema validation rejects unknown values, AND the
+# Validator checks against this allowlist at runtime (an N-1 bundle could
+# carry different enum membership). No default, no coercion, no case
+# normalization — unknown values Block with unknown_evidence_class.
+accepted_evidence_classes:
+  - deterministic
+  - mixed
+
+sha_binding:
+  format: full_40_hex
+  case: lowercase_normalized_by_producer
+  short_shas_rejected: true
+  freshness: head_sha_must_match_refetched_head
+  refetch_points:
+    - before_validation
+    - before_publication
+
+deterministic_checks_required:
+  - freshness
+  - pr_limits
+  - protected_paths
+  - required_checks
+  - secret_scan
+
+secret_findings:
+  blocking: true
+  matched_value_forbidden_everywhere: true

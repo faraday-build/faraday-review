@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/pull-request-review-evidence.schema.json",
+  "title": "PullRequestReviewEvidence",
+  "description": "Evidence envelope consumed by `faraday-validator evaluate-pr` (Faraday Review Phase 1, Correction 4). Distinct from review-evidence.schema.json, which is the TR-004 work-session review artifact and is unchanged; one authority per contract name (ADR-0001). Phase 1 producers are deterministic: `provider_results` and `required_providers` ship as EMPTY ARRAYS, not absent keys, so Phase 2 populates them without a schema migration. Migration discipline (Ruling 16): reviewer_version, evidence_class, deterministic_findings, provider_results, and required_providers are OPTIONAL in this minor release and are not promoted to required in Phase 1. The deterministic_findings item shape duplicates deterministic-finding.schema.json for standalone validation; consumer tests keep them identical.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "repository",
+    "pr_number",
+    "base_sha",
+    "head_sha",
+    "collected_at"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "reviewer_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Tag or commit of the producing plane. Phase 1: the deterministic plane's own version; recorded, not gated (Correction 5). Self-attesting-evidence checks activate in Phase 2."
+    },
+    "evidence_class": {
+      "type": "string",
+      "enum": ["deterministic", "mixed"],
+      "description": "Canonical enum: evidence-class.schema.json (kept identical by consumer tests). Validators additionally enforce a hardcoded runtime allowlist and fail closed on unknown values."
+    },
+    "deterministic_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "check", "severity", "message"],
+        "properties": {
+          "rule_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+          "check": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+          "severity": { "type": "string", "enum": ["info", "warning", "blocking"] },
+          "path": { "type": "string", "minLength": 1 },
+          "line": { "type": "integer", "minimum": 1 },
+          "rule_class": { "type": "string", "minLength": 1 },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "provider_results": {
+      "type": "array",
+      "items": { "type": "object" },
+      "description": "Phase 2 defines the item contract (ReviewProviderResult). Phase 1 producers always emit []. The item shape is deliberately unconstrained here so Phase 2 constrains it in a minor release."
+    },
+    "required_providers": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Providers policy required for this evaluation. Phase 1 producers always emit []."
+    },
+    "collected_at": { "type": "string", "format": "date-time" }
+  }
+}

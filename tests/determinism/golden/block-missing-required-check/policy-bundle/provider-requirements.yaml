@@ -1,0 +1,10 @@
+# Faraday Review — provider requirements (Phase 1)
+#
+# Ships now with zero required model providers so the schema is stable when
+# Phase 2 populates it. deterministic_only pins the phase: while true, the
+# Validator rejects evidence whose evidence_class is not 'deterministic'.
+
+policy_version: "1.0.0"
+required_providers: []
+adversary_required_paths: []   # populated in Phase 2
+deterministic_only: true

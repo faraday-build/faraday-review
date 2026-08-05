@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/risk-assessment.schema.json",
+  "title": "RiskAssessment",
+  "description": "Decision document written by `faraday-validator evaluate-pr` (Faraday Review Phase 1.7). Deterministic for identical inputs: `evaluated_at` is the single legitimately volatile field, excluded by name in the golden-file comparator. `risk_class` here is the REVIEW classification (green/yellow/red/block) and is distinct from risk-class.schema.json, which is the TR-004 session risk taxonomy (docs/standard/elevated/critical); one authority per contract name (ADR-0001). Green does NOT authorize: in Phase 1 approval_authorized and merge_authorized are false for every class, and all failures resolve to founder_review_required=true (fail closed). ApprovalDecision (approval-decision.schema.json) remains the artifact for the founder's human adjudication.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "repository",
+    "pr_number",
+    "base_sha",
+    "head_sha",
+    "risk_class",
+    "approval_authorized",
+    "merge_authorized",
+    "founder_review_required",
+    "blocking_reasons",
+    "policy_version",
+    "policy_digest",
+    "expected_policy_digest_source",
+    "evaluated_contract_minor",
+    "evidence_fingerprint",
+    "evaluated_at"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "risk_class": {
+      "type": "string",
+      "enum": ["green", "yellow", "red", "block"],
+      "description": "Review classification. Matches the founder adjudication label suffixes (faraday/founder-<class>)."
+    },
+    "approval_authorized": { "type": "boolean" },
+    "merge_authorized": { "type": "boolean" },
+    "founder_review_required": { "type": "boolean" },
+    "blocking_reasons": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "description": "Sorted lexicographically by the producer; a list, never a set (determinism prohibition)."
+    },
+    "policy_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "policy_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "canonical.bundle_digest of the evaluated policy bundle."
+    },
+    "expected_policy_digest_source": {
+      "type": "string",
+      "enum": ["cli_flag", "environment", "absent"],
+      "description": "Where the pinned expected digest came from. 'absent' always co-occurs with a policy_digest_unpinned Block."
+    },
+    "evaluated_contract_minor": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Which accepted contract minor (N or N-1) the evidence was evaluated under (Ruling 16)."
+    },
+    "reviewer_version": { "type": "string", "minLength": 1 },
+    "evidence_class": {
+      "type": "string",
+      "enum": ["deterministic", "mixed"],
+      "description": "Canonical enum: evidence-class.schema.json (kept identical by consumer tests)."
+    },
+    "evidence_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "canonical digest of the evaluated PullRequestReviewEvidence."
+    },
+    "evaluated_at": { "type": "string", "format": "date-time" }
+  }
+}
