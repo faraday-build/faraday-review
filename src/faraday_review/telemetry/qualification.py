@@ -94,6 +94,13 @@ def require_timestamp(value: str, what: str) -> str:
     return value
 
 
+def repo_identity(repository: str) -> str:
+    """Normalized repository identity. GitHub owner/repo names are
+    case-insensitive, so every identity comparison (correlation, synthetic
+    matching, counting) uses the casefolded form."""
+    return repository.casefold()
+
+
 def _sha256_bytes(raw: bytes) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
@@ -182,10 +189,11 @@ def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str
 
 def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str, Any]]) -> dict[str, Any]:
     """One run per (review_id, fingerprint): byte-identical uploads and
-    same-input re-runs collapse; the earliest completed record represents."""
+    same-input re-runs collapse; the earliest completed fresh record
+    represents. last_fresh_created_at considers fresh occurrences only."""
     ordered = sorted(
         group,
-        key=lambda rs: (rs[0]["final_status"] != "completed",
+        key=lambda rs: (rs[0]["final_status"] != "completed", rs[0]["stale_state"] != "fresh",
                         _sort_key_ts(rs[0]["created_at"]), canonical_bytes(rs[0]), rs[1]),
     )
     rep = dict(ordered[0][0])
@@ -194,6 +202,8 @@ def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str,
         anomalies.append({"kind": "classifier_class_differs_for_same_fingerprint",
                           "review_id": rep["review_id"], "classes": classes})
     rep["last_created_at"] = max((r["created_at"] for r, _ in group), key=_sort_key_ts)
+    fresh = [r["created_at"] for r, _ in group if r["stale_state"] == "fresh"]
+    rep["last_fresh_created_at"] = max(fresh, key=_sort_key_ts) if fresh else None
     rep["occurrences"] = len(group)
     rep["distinct_payloads"] = len({canonical_bytes(r) for r, _ in group})
     rep["sources"] = sorted({s for _, s in group})
@@ -262,29 +272,44 @@ def aggregate(input_dir: Path, *, generated_at: str,
         groups.setdefault((run["review_id"], run["fingerprint"]), []).append((run, rel))
     runs = [_collapse(groups[k], anomalies) for k in sorted(groups)]
 
-    # Correlate into entries keyed by (repository, pr, head, policy digest).
+    # Correlate into entries keyed by (repository identity, pr, head, digest).
     entries_by_key: dict[tuple[str, int, str, str], dict[str, Any]] = {}
     for run in runs:
-        key = (run["repository"], run["pr_number"], run["head_sha"],
+        key = (repo_identity(run["repository"]), run["pr_number"], run["head_sha"],
                run["policy_bundle_digest"] or "")
         entry = entries_by_key.setdefault(key, {
-            "repository": run["repository"],
+            "repository": key[0],
+            "repository_spellings": [],
             "pr_number": run["pr_number"],
             "head_sha": run["head_sha"],
             "policy_bundle_digest": run["policy_bundle_digest"],
             "runs": [],
         })
         entry["runs"].append(run)
+        if run["repository"] not in entry["repository_spellings"]:
+            entry["repository_spellings"] = sorted([*entry["repository_spellings"],
+                                                    run["repository"]])
 
-    # Superseded heads: per PR, the head whose latest run is newest is current.
+    # Current head: per PR, the head whose newest FRESH run is newest. A run
+    # whose freshness gate saw the head move (stale_*) never promotes its
+    # head; a PR with no fresh run has no current head at all.
     head_latest: dict[tuple[str, int], dict[str, Any]] = {}
+    all_prs = sorted({(k[0], k[1]) for k in entries_by_key})
     for (repo, pr, head, _), entry in entries_by_key.items():
-        latest = max((r["last_created_at"] for r in entry["runs"]), key=_sort_key_ts)
+        fresh = [r["last_fresh_created_at"] for r in entry["runs"] if r["last_fresh_created_at"]]
+        if not fresh:
+            continue
+        latest = max(fresh, key=_sort_key_ts)
         bucket = head_latest.setdefault((repo, pr), {})
         if head not in bucket or _sort_key_ts(latest) > _sort_key_ts(bucket[head]):
             bucket[head] = latest
-    current_head: dict[tuple[str, int], str] = {}
-    for pr_key in sorted(head_latest):
+    current_head: dict[tuple[str, int], str | None] = {}
+    for pr_key in all_prs:
+        if pr_key not in head_latest:
+            current_head[pr_key] = None
+            anomalies.append({"kind": "no_fresh_run_for_pr", "repository": pr_key[0],
+                              "pr_number": pr_key[1]})
+            continue
         ranked = sorted(head_latest[pr_key].items(),
                         key=lambda hv: (_sort_key_ts(hv[1]), hv[0]), reverse=True)
         current_head[pr_key] = ranked[0][0]
@@ -313,8 +338,8 @@ def aggregate(input_dir: Path, *, generated_at: str,
 
     by_head: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
     for record in accepted:
-        by_head.setdefault((record["repository"], record["pr_number"], record["head_sha"]),
-                           []).append(record)
+        by_head.setdefault((repo_identity(record["repository"]), record["pr_number"],
+                            record["head_sha"]), []).append(record)
     unmatched: list[dict[str, Any]] = []
     run_heads = {(k[0], k[1], k[2]) for k in entries_by_key}
     for head_key in sorted(by_head):
@@ -326,7 +351,9 @@ def aggregate(input_dir: Path, *, generated_at: str,
         entry = entries_by_key[key]
         entry["runs"] = sorted(entry["runs"], key=lambda r: (_sort_key_ts(r["created_at"]),
                                                              r["fingerprint"], r["review_id"]))
-        entry["superseded"] = current_head[(key[0], key[1])] != key[2]
+        current = current_head[(key[0], key[1])]
+        entry["current"] = current == key[2]
+        entry["superseded"] = current is not None and current != key[2]
         records = by_head.get((key[0], key[1], key[2]), [])
         if records:
             ranked = sorted(records, key=lambda r: (_sort_key_ts(r["labeled_at"]), r["label"]))
@@ -348,7 +375,8 @@ def aggregate(input_dir: Path, *, generated_at: str,
         entries.append(entry)
 
     for record in unmatched:
-        anomalies.append({"kind": "adjudication_without_run", "repository": record["repository"],
+        anomalies.append({"kind": "adjudication_without_run",
+                          "repository": repo_identity(record["repository"]),
                           "pr_number": record["pr_number"], "head_sha": record["head_sha"]})
 
     return {
@@ -398,30 +426,40 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         raise QualificationError(f"synthetic list fails schema: {errors[:3]}")
 
     anomalies: list[dict[str, Any]] = list(ledger["anomalies"])
-    synthetic_keys = {(s["repository"], s["pr_number"]) for s in synthetic}
-    ledger_prs = {(e["repository"], e["pr_number"]) for e in ledger["entries"]}
+    synthetic_keys = {(repo_identity(s["repository"]), s["pr_number"]) for s in synthetic}
+    synthetic_seen: set[tuple[str, int]] = set()
+    for s in synthetic:
+        skey = (repo_identity(s["repository"]), s["pr_number"])
+        if skey in synthetic_seen:
+            raise QualificationError(
+                f"synthetic list repeats {skey[0]}#{skey[1]} (repository identity is case-insensitive)")
+        synthetic_seen.add(skey)
+    ledger_prs = {(repo_identity(e["repository"]), e["pr_number"]) for e in ledger["entries"]}
 
     synthetic_excluded = _sorted_unique([
-        {"repository": s["repository"], "pr_number": s["pr_number"], "reason": s["reason"],
-         "present_in_ledger": (s["repository"], s["pr_number"]) in ledger_prs}
+        {"repository": repo_identity(s["repository"]), "pr_number": s["pr_number"],
+         "reason": s["reason"],
+         "present_in_ledger": (repo_identity(s["repository"]), s["pr_number"]) in ledger_prs}
         for s in synthetic
     ])
 
     real_entries = [e for e in ledger["entries"]
-                    if (e["repository"], e["pr_number"]) not in synthetic_keys]
-    current_entries = [e for e in real_entries if not e["superseded"]]
+                    if (repo_identity(e["repository"]), e["pr_number"]) not in synthetic_keys]
+    current_entries = [e for e in real_entries if e["current"]]
 
-    # One counted run per PR: latest completed run on the current head.
+    # One counted run per PR: latest completed FRESH run on the current head.
+    # Stale-but-completed runs are known-stale evidence and never count.
     per_pr: dict[tuple[str, int], list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for entry in current_entries:
         for run in entry["runs"]:
-            if run["final_status"] == "completed":
-                per_pr.setdefault((entry["repository"], entry["pr_number"]), []).append((entry, run))
+            if run["final_status"] == "completed" and run["stale_state"] == "fresh":
+                per_pr.setdefault((repo_identity(entry["repository"]), entry["pr_number"]),
+                                  []).append((entry, run))
 
     counted: list[dict[str, Any]] = []
     for pr_key in sorted(per_pr):
         pairs = per_pr[pr_key]
-        entry, run = max(pairs, key=lambda er: (_sort_key_ts(er[1]["last_created_at"]),
+        entry, run = max(pairs, key=lambda er: (_sort_key_ts(er[1]["last_fresh_created_at"]),
                                                 er[1]["fingerprint"]))
         first_seen = min((r["created_at"] for _, r in pairs), key=_sort_key_ts)
         classes = sorted({str(r["classifier_class"]) for _, r in pairs})

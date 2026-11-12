@@ -33,9 +33,17 @@ faraday-review readiness --ledger docs/qualification/ledger.json \
 ```
 
 `real_pr_count` = distinct (repository, PR) with at least one completed
-shadow run on its **current** head (latest head by run time; earlier heads
-are kept in the ledger but flagged `superseded`), excluding every PR listed
-in `synthetic-prs.json`. Identical events (same `review_id` + run
+**fresh** shadow run (`stale_state: fresh`) on its **current** head,
+excluding every PR listed in `synthetic-prs.json`. The current head is the
+head whose newest fresh run is newest; a run whose freshness gate saw the
+head move (`stale_before_validation` / `stale_before_publication`) never
+makes its head current and never counts, even though it completed. A PR
+with no fresh run has no current head and does not count (anomaly
+`no_fresh_run_for_pr`). Earlier heads stay in the ledger flagged
+`superseded`. Repository identity is case-insensitive: `owner/repo` is
+casefolded for every comparison (correlation, adjudication matching,
+synthetic exclusion, counting); original spellings are kept in
+`repository_spellings`. Identical events (same `review_id` + run
 fingerprint) are counted once. `gate.met` is `real_pr_count >= 20`; the
 threshold cannot be configured below 20. Founder labels are recorded with
 `faraday-review adjudicate` and attached only to the exact head SHA they

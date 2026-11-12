@@ -338,11 +338,11 @@ def test_policy_digest_drift_flagged(tmp_path):
 
 def test_reviewer_version_drift_and_stale_counts(tmp_path):
     write_run(tmp_path, "r1", pr=1, head="h1", reviewer_version="v0.1.0")
-    write_run(tmp_path, "r2", pr=2, head="h2", reviewer_version="v0.2.0",
-              stale_state="stale_before_publication")
+    write_run(tmp_path, "r2", pr=2, head="h2", reviewer_version="v0.2.0")
+    write_run(tmp_path, "r3", pr=3, head="h3", stale_state="stale_before_publication")
     drift = _report(_ledger(tmp_path))["drift"]
     assert drift["reviewer_version_drift"] is True
-    assert drift["stale_state_counts"] == {"fresh": 1, "stale_before_publication": 1}
+    assert drift["stale_state_counts"] == {"fresh": 2, "stale_before_publication": 1}
 
 
 def test_same_head_two_digests_correlate_separately(tmp_path):
@@ -382,3 +382,89 @@ def test_cli_end_to_end_is_canonical(tmp_path):
 def test_generated_at_required_and_validated(tmp_path):
     with pytest.raises(QualificationError):
         aggregate(tmp_path, generated_at="2026-11-12 00:00")
+
+
+# ----------------------------------------- regressions (Codex review, PR #5)
+
+
+def test_f1_repository_case_variant_does_not_inflate_count(tmp_path):
+    """Codex F1: 19 PRs + PR 1 under a case-variant spelling must stay 19."""
+    write_real_prs(tmp_path, 19)
+    write_run(tmp_path, "variant", repo="Faraday-Build/Pilot", pr=1, head="h1",
+              created_at="2026-11-01T12:00:00Z")
+    ledger = _ledger(tmp_path)
+    report = _report(ledger)
+    assert report["real_pr_count"] == 19
+    assert report["gate"]["met"] is False
+    (entry,) = [e for e in ledger["entries"] if e["pr_number"] == 1]
+    assert entry["repository"] == "faraday-build/pilot"
+    assert entry["repository_spellings"] == ["Faraday-Build/Pilot", "faraday-build/pilot"]
+
+
+def test_f1_synthetic_entries_match_case_insensitively(tmp_path):
+    """Codex F1: synthetic entries under FARADAY-BUILD/PILOT must exclude."""
+    write_real_prs(tmp_path, 20)
+    synthetic = [{"repository": "FARADAY-BUILD/PILOT", "pr_number": n, "reason": "seeded"}
+                 for n in range(1, 21)]
+    report = _report(_ledger(tmp_path), synthetic)
+    assert report["real_pr_count"] == 0
+    assert report["gate"]["met"] is False
+    assert {s["present_in_ledger"] for s in report["synthetic_excluded"]} == {True}
+    assert {s["repository"] for s in report["synthetic_excluded"]} == {"faraday-build/pilot"}
+
+
+def test_f1_adjudication_correlates_case_insensitively(tmp_path):
+    write_run(tmp_path, "r1", pr=1, head="h1")
+    write_label(tmp_path, "l1", repo="Faraday-Build/PILOT", pr=1, head="h1",
+                label="faraday/founder-yellow")
+    ledger = _ledger(tmp_path)
+    assert ledger["entries"][0]["founder_adjudication"]["founder_classification"] == "yellow"
+    assert ledger["adjudications"]["unmatched"] == []
+    assert _report(ledger)["adjudicated_count"] == 1
+
+
+def test_f2_stale_old_head_run_never_becomes_current(tmp_path):
+    """Codex F2: new head fresh at 10:00, old head stale-completed at 11:00."""
+    write_run(tmp_path, "new", pr=3, head="new", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path, "old-stale", pr=3, head="old", created_at="2026-11-01T11:00:00Z",
+              stale_state="stale_before_publication")
+    ledger = _ledger(tmp_path)
+    report = _report(ledger)
+    assert report["real_pr_count"] == 1
+    assert report["counted_prs"][0]["head_sha"] == sha("new")
+    flags = {e["head_sha"]: (e["current"], e["superseded"]) for e in ledger["entries"]}
+    assert flags == {sha("new"): (True, False), sha("old"): (False, True)}
+
+
+@pytest.mark.parametrize("state", ["stale_before_validation", "stale_before_publication"])
+def test_f2_pr_with_only_stale_runs_has_no_current_head_and_does_not_count(tmp_path, state):
+    write_real_prs(tmp_path, 19)
+    write_run(tmp_path, "stale-only", pr=50, head="h50", stale_state=state)
+    ledger = _ledger(tmp_path)
+    report = _report(ledger)
+    assert report["real_pr_count"] == 19
+    assert report["gate"]["met"] is False
+    (entry,) = [e for e in ledger["entries"] if e["pr_number"] == 50]
+    assert (entry["current"], entry["superseded"]) == (False, False)
+    assert {"kind": "no_fresh_run_for_pr", "repository": REPO, "pr_number": 50} in ledger["anomalies"]
+
+
+def test_f1_synthetic_list_rejects_case_variant_duplicates(tmp_path):
+    write_real_prs(tmp_path, 1)
+    synthetic = [{"repository": "faraday-build/pilot", "pr_number": 1, "reason": "a"},
+                 {"repository": "Faraday-Build/Pilot", "pr_number": 1, "reason": "b"}]
+    with pytest.raises(QualificationError):
+        _report(_ledger(tmp_path), synthetic)
+
+
+def test_f2_stale_completed_run_on_current_head_does_not_count(tmp_path):
+    """Fresh run makes the head current; a later stale re-run on that same
+    head is kept but is never the counted run."""
+    write_run(tmp_path, "fresh", pr=1, head="h1", cls="yellow", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path, "stale", pr=1, head="h1", cls="red", digest=DIGEST_B,
+              created_at="2026-11-01T11:00:00Z", stale_state="stale_before_validation")
+    report = _report(_ledger(tmp_path))
+    assert report["real_pr_count"] == 1
+    assert report["counted_prs"][0]["classifier_class"] == "yellow"
+    assert report["drift"]["policy_digest_drift"] is False
+    assert report["drift"]["stale_state_counts"] == {"fresh": 1, "stale_before_validation": 1}

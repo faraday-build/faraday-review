@@ -16,7 +16,7 @@
     "run": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["review_id", "fingerprint", "repository", "pr_number", "base_sha", "head_sha", "reviewer_version", "policy_bundle_digest", "policy_digest_verified", "classifier_class", "escalated", "blocking_reasons", "stale_state", "final_status", "failure_mode", "created_at", "last_created_at", "occurrences", "distinct_payloads", "sources"],
+      "required": ["review_id", "fingerprint", "repository", "pr_number", "base_sha", "head_sha", "reviewer_version", "policy_bundle_digest", "policy_digest_verified", "classifier_class", "escalated", "blocking_reasons", "stale_state", "final_status", "failure_mode", "created_at", "last_created_at", "last_fresh_created_at", "occurrences", "distinct_payloads", "sources"],
       "properties": {
         "review_id": { "type": "string" },
         "fingerprint": { "$ref": "#/$defs/digest" },
@@ -35,6 +35,10 @@
         "failure_mode": { "type": ["string", "null"] },
         "created_at": { "type": "string", "format": "date-time" },
         "last_created_at": { "type": "string", "format": "date-time" },
+        "last_fresh_created_at": {
+          "description": "Newest created_at among occurrences with stale_state 'fresh'; null if none. Only fresh runs can make a head current.",
+          "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+        },
         "occurrences": { "type": "integer", "minimum": 1 },
         "distinct_payloads": { "type": "integer", "minimum": 1 },
         "sources": { "type": "array", "minItems": 1, "items": { "type": "string" } }
@@ -63,13 +67,21 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["repository", "pr_number", "head_sha", "policy_bundle_digest", "superseded", "runs", "founder_adjudication"],
+        "required": ["repository", "repository_spellings", "pr_number", "head_sha", "policy_bundle_digest", "current", "superseded", "runs", "founder_adjudication"],
         "properties": {
-          "repository": { "$ref": "#/$defs/repository" },
+          "repository": {
+            "description": "Normalized (casefolded) repository identity used for every comparison.",
+            "type": "string", "pattern": "^[a-z0-9_.-]+/[a-z0-9_.-]+$"
+          },
+          "repository_spellings": {
+            "description": "Original repository spellings seen in telemetry for this entry.",
+            "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repository" }
+          },
           "pr_number": { "type": "integer", "minimum": 1 },
           "head_sha": { "$ref": "#/$defs/sha" },
           "policy_bundle_digest": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
-          "superseded": { "type": "boolean" },
+          "current": { "type": "boolean", "description": "This head is the PR's current head (selected from fresh runs only)." },
+          "superseded": { "type": "boolean", "description": "Another head of this PR is current. Both false: the PR has no fresh run." },
           "runs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/run" } },
           "founder_adjudication": {
             "oneOf": [
