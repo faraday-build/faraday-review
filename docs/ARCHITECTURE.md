@@ -38,7 +38,7 @@ refetch head (freshness gate 2) ──> check run + idempotent comment
 | `evidence/` | envelope build, schema validation, freshness | no |
 | `github/` | budgeted client, collection, publication | no |
 | `governance/` | policy load, digest pin, classification, decision | **yes — only here** |
-| `telemetry/` | run events, adjudication, throughput | passthrough only |
+| `telemetry/` | run events, adjudication, throughput, qualification ledger + readiness | passthrough only (neutral names in qualification outputs) |
 
 `tools/guards/authorization_boundary.py` enforces the last column in CI.
 

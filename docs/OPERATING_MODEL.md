@@ -33,6 +33,35 @@ After ≥20 real PRs, `faraday-review throughput` + the log must answer:
 Those answers populate `PHASE_2_INPUTS.md`; the model phase is scoped
 from that document, not from the Phase 1 handoff.
 
+## Qualification telemetry and retention
+
+Shadow runs execute on ephemeral runners, so no single runner holds the
+cross-PR record. The durable path is:
+
+1. Each shadow run uploads its artifacts dir (`telemetry.jsonl`,
+   `decision.json`, and `adjudications.jsonl` when a label event ran
+   `faraday-review adjudicate`) as a GitHub Actions artifact.
+2. **Run artifacts are retained 90 days.** They are raw inputs, not the
+   record of truth; their expiry loses nothing once step 3 has run.
+3. The operator downloads the artifacts into one directory and runs
+   `faraday-review aggregate` then `faraday-review readiness` (commands in
+   `PHASE_2_INPUTS.md`). The resulting **ledger + readiness report are the
+   durable record**: committed by PR under `docs/qualification/`, signed,
+   through the required checks — well inside the 90-day window.
+4. The ledger and readiness report record the sha256 of every input file,
+   so a committed report is auditable against the artifacts it came from.
+5. Committed ledgers and readiness reports are **never deleted during
+   rollback** (see `ROLLBACK.md`); rollback removes observation, not the
+   calibration record.
+
+Adjudications are matched on the founder `node_id` (`U_kgDODk3msA`),
+never login, at both `adjudicate` and `aggregate` time; rejected label
+events are kept and counted but never applied. Synthetic/test PRs are
+excluded only by listing them in `docs/qualification/synthetic-prs.json`
+(`{repository, pr_number, reason}`), reviewed by PR like any other change.
+The real-PR gate threshold has a hard floor of 20; `readiness` exits 2 on
+any lower value.
+
 ## Hard rules
 
 - No bypassing protections; stop gates are diagnosed, never routed around.

@@ -44,4 +44,7 @@ gh api -X POST repos/faraday-build/faraday-review/rulesets --input ruleset.json
 ## Telemetry
 
 `artifacts/reviews/telemetry.jsonl` is append-only run data. Never delete
-during rollback — it is the Phase 2 calibration input.
+during rollback — it is the Phase 2 calibration input. The aggregated
+qualification ledger and readiness report committed under
+`docs/qualification/` are the durable record and are likewise never
+deleted during rollback (retention rules: `OPERATING_MODEL.md`).
