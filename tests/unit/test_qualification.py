@@ -492,3 +492,21 @@ def test_rerun_on_same_head_keeps_latest_fresh_classification(tmp_path):
     ag = report["agreement"]
     assert (ag["compared"], ag["agree"], ag["disagree"]) == (1, 1, 0)
     assert report["founder_latency"]["all_adjudicated"]["median_seconds"] == 7200
+
+
+def test_collapsed_stale_rerun_is_still_reported(tmp_path):
+    """Codex P2 (d1e0437): a fresh run then a stale re-run with the same
+    identity collapse into the fresh representative, but the stale
+    occurrence must still appear in health metrics."""
+    write_run(tmp_path, "fresh", pr=8, head="h8", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path, "stale", pr=8, head="h8", created_at="2026-11-01T11:00:00Z",
+              stale_state="stale_before_publication")
+    write_run(tmp_path, "fresh-again/fresh", pr=8, head="h8", created_at="2026-11-01T10:00:00Z")  # byte-identical
+    ledger = _ledger(tmp_path)
+    (entry,) = [e for e in ledger["entries"] if e["pr_number"] == 8]
+    (run,) = entry["runs"]
+    assert run["stale_state"] == "fresh"
+    assert run["occurrence_stale_states"] == {"fresh": 1, "stale_before_publication": 1}
+    report = _report(ledger)
+    assert report["real_pr_count"] == 1
+    assert report["drift"]["stale_state_counts"] == {"fresh": 1, "stale_before_publication": 1}

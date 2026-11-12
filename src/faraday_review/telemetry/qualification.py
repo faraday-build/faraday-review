@@ -208,6 +208,16 @@ def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str,
     rep["last_created_at"] = max((r["created_at"] for r, _ in group), key=_sort_key_ts)
     fresh = [r["created_at"] for r, _ in group if r["stale_state"] == "fresh"]
     rep["last_fresh_created_at"] = max(fresh, key=_sort_key_ts) if fresh else None
+    # Per-state counts over distinct payloads (byte-identical re-uploads count
+    # once), so a stale re-run collapsed into a fresh representative is still
+    # reported (Codex P2, d1e0437).
+    distinct: dict[bytes, str] = {}
+    for r, _ in group:
+        distinct.setdefault(canonical_bytes(r), str(r["stale_state"]))
+    state_counts: dict[str, int] = {}
+    for state in distinct.values():
+        state_counts[state] = state_counts.get(state, 0) + 1
+    rep["occurrence_stale_states"] = dict(sorted(state_counts.items()))
     rep["occurrences"] = len(group)
     rep["distinct_payloads"] = len({canonical_bytes(r) for r, _ in group})
     rep["sources"] = sorted({s for _, s in group})
@@ -542,8 +552,10 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
     stale_counts: dict[str, int] = {}
     failure_modes: dict[str, int] = {}
     for run in all_real_runs:
-        state = run["stale_state"] or "unknown"
-        stale_counts[state] = stale_counts.get(state, 0) + 1
+        per_state = run.get("occurrence_stale_states") or {run["stale_state"] or "unknown": 1}
+        for state, n in sorted(per_state.items()):
+            state = state if state and state != "None" else "unknown"
+            stale_counts[state] = stale_counts.get(state, 0) + n
         if run["final_status"] == "failed":
             mode = run["failure_mode"] or "unspecified"
             failure_modes[mode] = failure_modes.get(mode, 0) + 1
