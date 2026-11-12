@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/local/founder-adjudication-record.schema.json",
+  "title": "FounderAdjudicationRecord",
+  "description": "One line of adjudications.jsonl, written by `faraday-review adjudicate`. Accepted only when actor.node_id equals founder_node_id; login is informational.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["record_type", "repository", "pr_number", "head_sha", "label", "labeled_at", "actor", "founder_node_id", "status"],
+  "properties": {
+    "record_type": { "const": "founder_adjudication" },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "label": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "labeled_at": { "type": "string", "format": "date-time" },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "login"],
+      "properties": {
+        "node_id": { "type": "string", "minLength": 1 },
+        "login": { "type": "string" }
+      }
+    },
+    "founder_node_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["accepted", "rejected"] },
+    "reject_reason": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "founder_classification": { "enum": ["green", "yellow", "red", "block"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "accepted" } } },
+      "then": { "required": ["founder_classification"], "not": { "required": ["reject_reason"] } },
+      "else": { "required": ["reject_reason"], "not": { "required": ["founder_classification"] } }
+    }
+  ]
+}

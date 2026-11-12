@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/local/qualification-ledger.schema.json",
+  "title": "QualificationLedger",
+  "description": "Output of `faraday-review aggregate`: every shadow run and founder adjudication from downloaded run artifacts, deduplicated and correlated by (repository, pr_number, head_sha, policy_bundle_digest). Deterministic for identical inputs and --generated-at.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "generated_at", "founder_node_id", "inputs", "entries", "adjudications", "counts", "anomalies"],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "class": { "enum": ["green", "yellow", "red", "block"] },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "anomaly": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" } } },
+    "adjudication": { "$ref": "founder-adjudication-record.schema.json" },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_id", "fingerprint", "repository", "pr_number", "base_sha", "head_sha", "reviewer_version", "policy_bundle_digest", "policy_digest_verified", "classifier_class", "escalated", "blocking_reasons", "stale_state", "final_status", "failure_mode", "created_at", "last_created_at", "occurrences", "distinct_payloads", "sources"],
+      "properties": {
+        "review_id": { "type": "string" },
+        "fingerprint": { "$ref": "#/$defs/digest" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "pr_number": { "type": "integer", "minimum": 1 },
+        "base_sha": { "$ref": "#/$defs/sha" },
+        "head_sha": { "$ref": "#/$defs/sha" },
+        "reviewer_version": { "type": ["string", "null"] },
+        "policy_bundle_digest": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "policy_digest_verified": { "type": "boolean" },
+        "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] },
+        "escalated": { "type": "boolean" },
+        "blocking_reasons": { "type": "array", "items": { "type": "string" } },
+        "stale_state": { "type": ["string", "null"] },
+        "final_status": { "enum": ["completed", "failed"] },
+        "failure_mode": { "type": ["string", "null"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "last_created_at": { "type": "string", "format": "date-time" },
+        "occurrences": { "type": "integer", "minimum": 1 },
+        "distinct_payloads": { "type": "integer", "minimum": 1 },
+        "sources": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    }
+  },
+  "properties": {
+    "format": { "const": "faraday-review/qualification-ledger/v1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "founder_node_id": { "type": "string", "minLength": 1 },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "kind", "sha256"],
+        "properties": {
+          "path": { "type": "string" },
+          "kind": { "enum": ["telemetry", "adjudications", "decision"] },
+          "sha256": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "pr_number", "head_sha", "policy_bundle_digest", "superseded", "runs", "founder_adjudication"],
+        "properties": {
+          "repository": { "$ref": "#/$defs/repository" },
+          "pr_number": { "type": "integer", "minimum": 1 },
+          "head_sha": { "$ref": "#/$defs/sha" },
+          "policy_bundle_digest": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+          "superseded": { "type": "boolean" },
+          "runs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/run" } },
+          "founder_adjudication": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["founder_classification", "labeled_at", "label", "actor", "accepted_records"],
+                "properties": {
+                  "founder_classification": { "$ref": "#/$defs/class" },
+                  "labeled_at": { "type": "string", "format": "date-time" },
+                  "label": { "type": "string" },
+                  "actor": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["node_id", "login"],
+                    "properties": { "node_id": { "type": "string" }, "login": { "type": "string" } }
+                  },
+                  "accepted_records": { "type": "integer", "minimum": 1 }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "adjudications": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted_count", "rejected_count", "rejected", "unmatched"],
+      "properties": {
+        "accepted_count": { "type": "integer", "minimum": 0 },
+        "rejected_count": { "type": "integer", "minimum": 0 },
+        "rejected": { "type": "array", "items": { "$ref": "#/$defs/adjudication" } },
+        "unmatched": { "type": "array", "items": { "$ref": "#/$defs/adjudication" } }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events_read", "runs_after_dedup", "duplicates_collapsed", "entries", "superseded_entries"],
+      "properties": {
+        "events_read": { "type": "integer", "minimum": 0 },
+        "runs_after_dedup": { "type": "integer", "minimum": 0 },
+        "duplicates_collapsed": { "type": "integer", "minimum": 0 },
+        "entries": { "type": "integer", "minimum": 0 },
+        "superseded_entries": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "anomalies": { "type": "array", "items": { "$ref": "#/$defs/anomaly" } }
+  }
+}

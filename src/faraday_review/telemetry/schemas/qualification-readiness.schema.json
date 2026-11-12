@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/local/qualification-readiness.schema.json",
+  "title": "QualificationReadiness",
+  "description": "Output of `faraday-review readiness`: the machine-readable Phase 1 gate report derived from a QualificationLedger. gate.threshold has a hard floor of 20; synthetic PRs never count.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "generated_at", "real_pr_count", "counted_prs", "synthetic_excluded", "adjudicated_count", "agreement", "escalation", "founder_latency", "drift", "anomalies", "evidence", "gate"],
+  "$defs": {
+    "class": { "enum": ["green", "yellow", "red", "block"] },
+    "count": { "type": "integer", "minimum": 0 },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["green", "yellow", "red", "block"],
+      "properties": {
+        "green": { "$ref": "#/$defs/count" }, "yellow": { "$ref": "#/$defs/count" },
+        "red": { "$ref": "#/$defs/count" }, "block": { "$ref": "#/$defs/count" }
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n", "median_seconds", "p90_seconds"],
+      "properties": {
+        "n": { "$ref": "#/$defs/count" },
+        "median_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "p90_seconds": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": { "name": { "type": "string" }, "sha256": { "$ref": "#/$defs/digest" } }
+    }
+  },
+  "properties": {
+    "format": { "const": "faraday-review/qualification-readiness/v1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "real_pr_count": { "$ref": "#/$defs/count" },
+    "counted_prs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "pr_number", "head_sha", "review_id", "classifier_class", "adjudicated"],
+        "properties": {
+          "repository": { "$ref": "#/$defs/repository" },
+          "pr_number": { "type": "integer", "minimum": 1 },
+          "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "review_id": { "type": "string" },
+          "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] },
+          "adjudicated": { "type": "boolean" }
+        }
+      }
+    },
+    "synthetic_excluded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "pr_number", "reason", "present_in_ledger"],
+        "properties": {
+          "repository": { "$ref": "#/$defs/repository" },
+          "pr_number": { "type": "integer", "minimum": 1 },
+          "reason": { "type": "string", "minLength": 1 },
+          "present_in_ledger": { "type": "boolean" }
+        }
+      }
+    },
+    "adjudicated_count": { "$ref": "#/$defs/count" },
+    "agreement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compared", "agree", "disagree", "agreement_rate", "confusion_matrix", "direction", "disagreements"],
+      "properties": {
+        "compared": { "$ref": "#/$defs/count" },
+        "agree": { "$ref": "#/$defs/count" },
+        "disagree": { "$ref": "#/$defs/count" },
+        "agreement_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "confusion_matrix": {
+          "description": "Rows: classifier_class. Columns: founder_classification.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["green", "yellow", "red", "block"],
+          "properties": {
+            "green": { "$ref": "#/$defs/row" }, "yellow": { "$ref": "#/$defs/row" },
+            "red": { "$ref": "#/$defs/row" }, "block": { "$ref": "#/$defs/row" }
+          }
+        },
+        "direction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["over_escalation", "under_escalation"],
+          "properties": {
+            "over_escalation": { "$ref": "#/$defs/count" },
+            "under_escalation": { "$ref": "#/$defs/count" }
+          }
+        },
+        "disagreements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repository", "pr_number", "head_sha", "classifier_class", "founder_classification", "direction"],
+            "properties": {
+              "repository": { "$ref": "#/$defs/repository" },
+              "pr_number": { "type": "integer", "minimum": 1 },
+              "head_sha": { "type": "string" },
+              "classifier_class": { "$ref": "#/$defs/class" },
+              "founder_classification": { "$ref": "#/$defs/class" },
+              "direction": { "enum": ["over_escalation", "under_escalation"] }
+            }
+          }
+        }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["escalated_count", "classifier_class_distribution", "pr_too_large_escalations", "api_budget_exceeded_escalations"],
+      "properties": {
+        "escalated_count": { "$ref": "#/$defs/count" },
+        "classifier_class_distribution": { "$ref": "#/$defs/row" },
+        "pr_too_large_escalations": { "$ref": "#/$defs/count" },
+        "api_budget_exceeded_escalations": { "$ref": "#/$defs/count" }
+      }
+    },
+    "founder_latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["all_adjudicated", "escalated_only"],
+      "properties": {
+        "all_adjudicated": { "$ref": "#/$defs/latency" },
+        "escalated_only": { "$ref": "#/$defs/latency" }
+      }
+    },
+    "drift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_bundle_digests", "policy_digest_drift", "policy_digest_unverified_runs", "reviewer_versions", "reviewer_version_drift", "stale_state_counts", "infrastructure_failures"],
+      "properties": {
+        "policy_bundle_digests": { "type": "array", "items": { "$ref": "#/$defs/digest" } },
+        "policy_digest_drift": { "type": "boolean" },
+        "policy_digest_unverified_runs": { "$ref": "#/$defs/count" },
+        "reviewer_versions": { "type": "array", "items": { "type": "string" } },
+        "reviewer_version_drift": { "type": "boolean" },
+        "stale_state_counts": { "type": "object", "additionalProperties": { "$ref": "#/$defs/count" } },
+        "infrastructure_failures": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["failed_runs", "failure_modes", "api_budget_exceeded_runs"],
+          "properties": {
+            "failed_runs": { "$ref": "#/$defs/count" },
+            "failure_modes": { "type": "object", "additionalProperties": { "$ref": "#/$defs/count" } },
+            "api_budget_exceeded_runs": { "$ref": "#/$defs/count" }
+          }
+        }
+      }
+    },
+    "anomalies": {
+      "type": "array",
+      "items": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string" } } }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ledger", "synthetic", "ledger_inputs"],
+      "properties": {
+        "ledger": { "$ref": "#/$defs/file" },
+        "synthetic": { "$ref": "#/$defs/file" },
+        "ledger_inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "kind", "sha256"],
+            "properties": {
+              "path": { "type": "string" },
+              "kind": { "enum": ["telemetry", "adjudications", "decision"] },
+              "sha256": { "$ref": "#/$defs/digest" }
+            }
+          }
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["threshold", "criterion", "met"],
+      "properties": {
+        "threshold": { "type": "integer", "minimum": 20 },
+        "criterion": { "const": "real_pr_count >= threshold" },
+        "met": { "type": "boolean" }
+      }
+    }
+  }
+}

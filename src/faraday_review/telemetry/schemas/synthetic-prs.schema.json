@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/local/synthetic-prs.schema.json",
+  "title": "SyntheticPrList",
+  "description": "docs/qualification/synthetic-prs.json — PRs excluded from the Phase 1 real-PR count (test, demo, or seeded PRs). The file is the only synthetic-exclusion mechanism.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["repository", "pr_number", "reason"],
+    "properties": {
+      "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+      "pr_number": { "type": "integer", "minimum": 1 },
+      "reason": { "type": "string", "minLength": 1 }
+    }
+  }
+}
