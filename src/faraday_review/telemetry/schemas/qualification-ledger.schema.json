@@ -16,7 +16,7 @@
     "run": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["review_id", "fingerprint", "repository", "pr_number", "base_sha", "head_sha", "reviewer_version", "policy_bundle_digest", "policy_digest_verified", "classifier_class", "escalated", "blocking_reasons", "stale_state", "final_status", "failure_mode", "created_at", "last_created_at", "last_fresh_created_at", "occurrences", "distinct_payloads", "sources"],
+      "required": ["review_id", "fingerprint", "repository", "pr_number", "base_sha", "head_sha", "reviewer_version", "policy_bundle_digest", "policy_digest_verified", "classifier_class", "escalated", "blocking_reasons", "stale_state", "final_status", "failure_mode", "created_at", "first_created_at", "last_created_at", "last_fresh_created_at", "occurrences", "distinct_payloads", "sources"],
       "properties": {
         "review_id": { "type": "string" },
         "fingerprint": { "$ref": "#/$defs/digest" },
@@ -34,6 +34,7 @@
         "final_status": { "enum": ["completed", "failed"] },
         "failure_mode": { "type": ["string", "null"] },
         "created_at": { "type": "string", "format": "date-time" },
+        "first_created_at": { "type": "string", "format": "date-time" },
         "last_created_at": { "type": "string", "format": "date-time" },
         "last_fresh_created_at": {
           "description": "Newest created_at among occurrences with stale_state 'fresh'; null if none. Only fresh runs can make a head current.",

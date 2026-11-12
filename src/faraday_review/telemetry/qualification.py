@@ -189,18 +189,22 @@ def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str
 
 def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str, Any]]) -> dict[str, Any]:
     """One run per (review_id, fingerprint): byte-identical uploads and
-    same-input re-runs collapse; the earliest completed fresh record
-    represents. last_fresh_created_at considers fresh occurrences only."""
-    ordered = sorted(
+    same-input re-runs collapse. The LATEST completed fresh record represents,
+    because the run fingerprint excludes observed check states, so a later
+    fresh re-run can legitimately carry a newer classification (Codex P2,
+    e44f0e8). first_created_at keeps the earliest occurrence for latency;
+    last_fresh_created_at considers fresh occurrences only."""
+    best = max(
         group,
-        key=lambda rs: (rs[0]["final_status"] != "completed", rs[0]["stale_state"] != "fresh",
+        key=lambda rs: (rs[0]["final_status"] == "completed", rs[0]["stale_state"] == "fresh",
                         _sort_key_ts(rs[0]["created_at"]), canonical_bytes(rs[0]), rs[1]),
     )
-    rep = dict(ordered[0][0])
+    rep = dict(best[0])
     classes = sorted({str(r["classifier_class"]) for r, _ in group})
     if len(classes) > 1:
         anomalies.append({"kind": "classifier_class_differs_for_same_fingerprint",
                           "review_id": rep["review_id"], "classes": classes})
+    rep["first_created_at"] = min((r["created_at"] for r, _ in group), key=_sort_key_ts)
     rep["last_created_at"] = max((r["created_at"] for r, _ in group), key=_sort_key_ts)
     fresh = [r["created_at"] for r, _ in group if r["stale_state"] == "fresh"]
     rep["last_fresh_created_at"] = max(fresh, key=_sort_key_ts) if fresh else None
@@ -461,7 +465,7 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         pairs = per_pr[pr_key]
         entry, run = max(pairs, key=lambda er: (_sort_key_ts(er[1]["last_fresh_created_at"]),
                                                 er[1]["fingerprint"]))
-        first_seen = min((r["created_at"] for _, r in pairs), key=_sort_key_ts)
+        first_seen = min((r["first_created_at"] for _, r in pairs), key=_sort_key_ts)
         classes = sorted({str(r["classifier_class"]) for _, r in pairs})
         if len(classes) > 1:
             anomalies.append({"kind": "classifier_class_differs_on_current_head",

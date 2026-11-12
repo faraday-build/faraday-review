@@ -132,7 +132,9 @@ def test_aggregate_dedupes_identical_and_rerun_events(tmp_path):
     (run,) = entry["runs"]
     assert run["occurrences"] == 3
     assert run["distinct_payloads"] == 2
-    assert run["created_at"] == "2026-11-01T10:00:00Z"
+    # latest fresh completed occurrence represents; earliest kept for latency
+    assert run["created_at"] == "2026-11-01T10:05:00Z"
+    assert run["first_created_at"] == "2026-11-01T10:00:00Z"
     assert run["last_created_at"] == "2026-11-01T10:05:00Z"
     assert run["policy_digest_verified"] is True
     assert run["policy_bundle_digest"] == DIGEST_A
@@ -468,3 +470,25 @@ def test_f2_stale_completed_run_on_current_head_does_not_count(tmp_path):
     assert report["counted_prs"][0]["classifier_class"] == "yellow"
     assert report["drift"]["policy_digest_drift"] is False
     assert report["drift"]["stale_state_counts"] == {"fresh": 1, "stale_before_validation": 1}
+
+
+def test_rerun_on_same_head_keeps_latest_fresh_classification(tmp_path):
+    """Codex P2 (e44f0e8): a 10:00 Block then an 11:00 Green on the same head
+    (same review_id + fingerprint, checks finished in between) with a founder
+    Green label must count as Green and agree; latency is measured from 10:00."""
+    write_run(tmp_path, "early-block", pr=7, head="h7", cls="block", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path, "late-green", pr=7, head="h7", cls="green", escalated=False,
+              created_at="2026-11-01T11:00:00Z")
+    write_label(tmp_path, "label", pr=7, head="h7", label="faraday/founder-green",
+                labeled_at="2026-11-01T12:00:00Z")
+    ledger = _ledger(tmp_path)
+    (entry,) = [e for e in ledger["entries"] if e["pr_number"] == 7]
+    (run,) = entry["runs"]
+    assert run["classifier_class"] == "green"
+    assert run["first_created_at"] == "2026-11-01T10:00:00Z"
+    assert run["occurrences"] == 2
+    report = _report(ledger)
+    assert report["counted_prs"][0]["classifier_class"] == "green"
+    ag = report["agreement"]
+    assert (ag["compared"], ag["agree"], ag["disagree"]) == (1, 1, 0)
+    assert report["founder_latency"]["all_adjudicated"]["median_seconds"] == 7200
