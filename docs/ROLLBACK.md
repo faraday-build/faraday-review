@@ -14,10 +14,12 @@ gh api -X DELETE repos/OWNER/REPO/contents/.github/workflows/faraday-review.yml 
 
 ## Disable estate-wide
 
-Remove/empty the reusable workflow in `tomrivera-ops/.github` via PR:
-`.github/workflows/reusable-faraday-review.yml`. Consumers fail cleanly
-(missing reusable workflow ⇒ workflow error, no decisions produced, no
-authorization impact).
+Callers pin `shadow.yml` by commit SHA, so editing it on `main` does not
+affect them. Disable estate-wide by removing each caller's
+`.github/workflows/faraday-review.yml` via PR (preferred), or disable the
+caller workflow (`gh workflow disable faraday-review -R OWNER/REPO`).
+Callers then produce no decisions; there is no authorization impact because
+the plane authorizes nothing.
 
 ## Un-pin / re-pin policy
 

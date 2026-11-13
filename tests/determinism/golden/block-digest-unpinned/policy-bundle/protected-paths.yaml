@@ -1,0 +1,42 @@
+# Faraday Review — protected path classification (Phase 1)
+#
+# Classification rule: every changed path is matched against the classes
+# below; the PR's path-derived class is the MAXIMUM matched class
+# (green < yellow < red). A path matching no pattern takes default_class —
+# yellow, so unknown surface area fails toward review, never toward green.
+# Patterns are gitignore-style globs evaluated case-sensitively against
+# repo-relative POSIX paths. First match within a class list is sufficient;
+# ordering inside a list has no semantic weight.
+
+policy_version: "1.0.0"
+default_class: yellow
+
+classes:
+  red:
+    - ".github/**"
+    - "CODEOWNERS"
+    - "**/CODEOWNERS"
+    - "tools/guards/**"
+    - "review-policy/**"
+    - "repo.manifest.json"
+    - "schemas/**"
+    - "rulesets/**"
+    - "ci-rulesets/**"
+  yellow:
+    - "src/**"
+    - "pyproject.toml"
+    - "package.json"
+    - "package-lock.json"
+    - "uv.lock"
+    - "poetry.lock"
+    - "requirements*.txt"
+    - "Dockerfile"
+    - "docker-compose*.yml"
+    - ".pre-commit-config.yaml"
+  green:
+    - "docs/**"
+    - "*.md"
+    - "**/*.md"
+    - "tests/**"
+    - "LICENSE"
+    - ".gitignore"

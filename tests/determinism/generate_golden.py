@@ -95,6 +95,13 @@ CASES: dict[str, dict] = {
         "evidence": evidence(),
         "expected_digest": WRONG_DIGEST,
     },
+    "block-digest-unpinned": {
+        # No pin supplied (empty FARADAY_POLICY_DIGEST in the reusable
+        # workflow): must Block policy_digest_unpinned, never pass.
+        "context": context(["docs/RUNBOOK.md"]),
+        "evidence": evidence(),
+        "expected_digest": "",
+    },
     "block-missing-required-check": {
         "context": context(["docs/RUNBOOK.md"], checks=[{"context": "ci", "state": "missing"}]),
         "evidence": evidence(),
@@ -127,8 +134,8 @@ def main() -> None:
             context_path=root / "context.json",
             evidence_path=root / "evidence.json",
             bundle_root=root / "policy-bundle",
-            expected_digest=expected_digest,
-            digest_source="cli_flag",
+            expected_digest=expected_digest or None,
+            digest_source="cli_flag" if expected_digest else "absent",
             infrastructure_failure=spec.get("infrastructure_failure"),
             evaluated_at=PINNED_AT,
         )
