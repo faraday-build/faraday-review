@@ -35,16 +35,30 @@ faraday-review readiness --ledger docs/qualification/ledger.json \
 `real_pr_count` = distinct (repository, PR) with at least one completed
 **fresh** shadow run (`stale_state: fresh`) on its **current** head,
 excluding every PR listed in `synthetic-prs.json`. The current head is the
-head whose newest fresh run is newest; a run whose freshness gate saw the
-head move (`stale_before_validation` / `stale_before_publication`) never
-makes its head current and never counts, even though it completed. A PR
-with no fresh run has no current head and does not count (anomaly
-`no_fresh_run_for_pr`). Earlier heads stay in the ledger flagged
+head whose newest **completed and fresh** occurrence is newest; a run whose
+freshness gate saw the head move (`stale_before_validation` /
+`stale_before_publication`) never makes its head current and never counts,
+even though it completed, and a failed occurrence never makes its head
+current either. A PR with no completed-and-fresh occurrence has no current
+head and does not count (anomaly `no_fresh_run_for_pr` when every
+occurrence was stale, `no_eligible_run_for_pr` when fresh occurrences exist
+but none completed). Earlier heads stay in the ledger flagged
 `superseded`. Repository identity is case-insensitive: `owner/repo` is
 casefolded for every comparison (correlation, adjudication matching,
 synthetic exclusion, counting); original spellings are kept in
 `repository_spellings`. Identical events (same `review_id` + run
-fingerprint) are counted once. `gate.met` is `real_pr_count >= 20`; the
+fingerprint) are counted once for qualification. Each distinct execution
+occurrence (a failed attempt, a retry, a budget-exhausted run) is kept in
+the run's `occurrence_log`; copies of the same event, with or without
+`decision.json`, are one occurrence. Any verified copy proves the run's
+policy digest (the fingerprint binds it), so a partial copy never erases
+it; a `decision.json` that fails to verify beside a verified copy is
+flagged `policy_digest_evidence_conflict`, and two different verified
+digests are flagged `policy_digest_conflict` and fail closed to unverified.
+Infrastructure health (`drift.stale_state_counts`,
+`drift.infrastructure_failures`) counts occurrences, so a successful retry
+never erases an earlier failure or budget exhaustion; the qualification
+fields (`real_pr_count`, `escalation.*`) use only the counted run. `gate.met` is `real_pr_count >= 20`; the
 threshold cannot be configured below 20. Founder labels are recorded with
 `faraday-review adjudicate` and attached only to the exact head SHA they
 were applied to. The report also carries agreement (confusion matrix,

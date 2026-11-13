@@ -68,10 +68,11 @@ events are kept and counted but never applied. Synthetic/test PRs are
 excluded only by listing them in `docs/qualification/synthetic-prs.json`
 (`{repository, pr_number, reason}`), reviewed by PR like any other change;
 repository names match case-insensitively and a case-variant duplicate
-entry is rejected. Only completed runs whose freshness gates passed
+entry is rejected. Only completed occurrences whose freshness gates passed
 (`stale_state: fresh`) count or select a PR's current head; stale-but-
-completed runs are kept in the ledger as known-stale evidence and never
-counted.
+completed runs and failed occurrences are kept in the ledger
+(`occurrence_log`) as evidence and never counted. Infrastructure-health
+counts are occurrence-level and kept separate from the qualification count.
 The real-PR gate threshold has a hard floor of 20; `readiness` exits 2 on
 any lower value.
 

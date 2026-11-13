@@ -23,6 +23,17 @@ def _build(root: Path, reverse: bool = False) -> None:
         lambda: write_run(root, "push-4", pr=4, head="h4b", created_at="2026-11-02T09:00:00Z"),
         lambda: write_run(root, "drift-5", pr=5, head="h5", digest=DIGEST_B,
                           created_at="2026-11-02T09:00:00Z"),
+        # Occurrence-level paths: failed retry, budget exhaustion then
+        # success, a partial copy without decision.json, a later failed head.
+        lambda: write_run(root, "retry-6", pr=6, head="h6", created_at="2026-11-01T09:00:00Z",
+                          final_status="failed", failure_mode="runner_lost"),
+        lambda: write_run(root, "budget-8", pr=8, head="h8", created_at="2026-11-01T09:00:00Z",
+                          cls="block", reasons=("github_api_budget_exceeded",)),
+        lambda: write_run(root, "partial-7", pr=7, head="h7", created_at="2026-11-01T10:07:00Z",
+                          with_decision=False),
+        lambda: write_run(root, "failed-head-9", pr=9, head="h9b",
+                          created_at="2026-11-03T09:00:00Z", final_status="failed",
+                          failure_mode="runner_lost"),
         lambda: write_label(root, "label-1", pr=1, head="h1", label="faraday/founder-green"),
         lambda: write_label(root, "label-2", pr=2, head="h2", label="faraday/founder-red",
                             labeled_at="2026-11-01T13:00:00Z"),
@@ -58,6 +69,8 @@ def test_qualification_outputs_byte_identical_across_seeds(tmp_path):
     # Sanity: the scenario exercises the interesting paths.
     assert b'"policy_digest_drift":true' in outputs["0"]
     assert b'"superseded":true' in outputs["0"]
+    assert b'"api_budget_exceeded_runs":1' in outputs["0"]
+    assert b'"failed_runs":2' in outputs["0"]
 
 
 def test_qualification_independent_of_creation_order(tmp_path):

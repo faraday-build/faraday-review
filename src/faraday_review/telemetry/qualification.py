@@ -150,8 +150,13 @@ def _read_jsonl(path: Path, rel: str, anomalies: list[dict[str, Any]]) -> list[t
 
 def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str,
                 anomalies: list[dict[str, Any]]) -> dict[str, Any]:
+    """One raw occurrence copy. `_decision_evidence` (internal, never output)
+    records what the adjacent decision.json proved: "verified", "mismatch"
+    (present but its digest does not reproduce the event fingerprint) or
+    "absent"."""
     digest_value = None
     verified = False
+    evidence = "absent"
     if decision is not None and event.get("reviewer_version"):
         candidate = decision.get("policy_digest")
         recomputed = run_fingerprint(
@@ -161,6 +166,9 @@ def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str
         if recomputed == event["fingerprint"] and isinstance(candidate, str):
             digest_value = candidate
             verified = True
+            evidence = "verified"
+        else:
+            evidence = "mismatch"
     if not verified:
         anomalies.append({"kind": "policy_digest_unverified", "source": rel,
                           "review_id": event["review_id"]})
@@ -184,10 +192,11 @@ def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str
         "final_status": event["final_status"],
         "failure_mode": event.get("failure_mode"),
         "created_at": event["created_at"],
+        "_decision_evidence": evidence,
     }
 
 
-_DECISION_DERIVED = ("policy_bundle_digest", "policy_digest_verified")
+_DECISION_DERIVED = ("policy_bundle_digest", "policy_digest_verified", "_decision_evidence")
 
 
 def _event_bytes(run: dict[str, Any]) -> bytes:
@@ -197,54 +206,124 @@ def _event_bytes(run: dict[str, Any]) -> bytes:
     return canonical_bytes({k: v for k, v in run.items() if k not in _DECISION_DERIVED})
 
 
+def _eligible(occ: dict[str, Any]) -> bool:
+    """Only a completed run whose freshness gates passed can count for
+    qualification or select a PR's current head."""
+    return occ["final_status"] == "completed" and occ["stale_state"] == "fresh"
+
+
+def _budget_exhausted(occ: dict[str, Any]) -> bool:
+    return BUDGET_REASON in occ["blocking_reasons"] or occ["failure_mode"] == BUDGET_REASON
+
+
+def _occurrences(group: list[tuple[dict[str, Any], str]]) -> list[dict[str, Any]]:
+    """Distinct execution occurrences of one run, in time order.
+
+    Copies of the same event (byte-identical event content, wherever it was
+    archived and whether or not decision.json travelled with it) are one
+    occurrence; their verification evidence is reconciled, never chosen by
+    ingestion order. Every distinct occurrence is retained, failed or not, so
+    nothing downstream has to re-derive history from a representative."""
+    by_event: dict[bytes, list[tuple[dict[str, Any], str]]] = {}
+    for run, src in group:
+        by_event.setdefault(_event_bytes(run), []).append((run, src))
+    out: list[dict[str, Any]] = []
+    for key in sorted(by_event):
+        copies = by_event[key]
+        event = {k: v for k, v in copies[0][0].items() if k not in _DECISION_DERIVED}
+        evidence = {r["_decision_evidence"] for r, _ in copies}
+        verified = sorted({r["policy_bundle_digest"] for r, _ in copies
+                           if r["policy_digest_verified"] and r["policy_bundle_digest"]})
+        out.append({
+            "event": event,
+            "key": key,
+            "verified_digests": verified,
+            "mismatch_sources": sorted({s for r, s in copies
+                                        if r["_decision_evidence"] == "mismatch"}),
+            "log": {
+                "event_sha256": _sha256_bytes(key),
+                "created_at": event["created_at"],
+                "final_status": event["final_status"],
+                "failure_mode": event["failure_mode"],
+                "stale_state": event["stale_state"],
+                "classifier_class": event["classifier_class"],
+                "blocking_reasons": event["blocking_reasons"],
+                "budget_exhausted": _budget_exhausted(event),
+                "policy_digest_verified": "verified" in evidence,
+                "copies": len(copies),
+                "sources": sorted({s for _, s in copies}),
+            },
+        })
+    return sorted(out, key=lambda o: (_sort_key_ts(o["log"]["created_at"]), o["log"]["event_sha256"]))
+
+
 def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str, Any]]) -> dict[str, Any]:
-    """One run per (review_id, fingerprint): byte-identical uploads and
-    same-input re-runs collapse. The LATEST completed fresh record represents,
-    because the run fingerprint excludes observed check states, so a later
-    fresh re-run can legitimately carry a newer classification (Codex P2,
-    e44f0e8). first_created_at keeps the earliest occurrence for latency;
-    last_fresh_created_at considers fresh occurrences only."""
-    best = max(
-        group,
-        # Verified evidence outranks the byte tie-breaker, so an identical
-        # event copied without its decision.json never erases a verified
-        # digest (Codex P2, c92d872).
-        key=lambda rs: (rs[0]["final_status"] == "completed", rs[0]["stale_state"] == "fresh",
-                        _sort_key_ts(rs[0]["created_at"]), rs[0]["policy_digest_verified"] is True,
-                        canonical_bytes(rs[0]), rs[1]),
-    )
-    rep = dict(best[0])
-    classes = sorted({str(r["classifier_class"]) for r, _ in group})
+    """One run per (review_id, fingerprint), built in one pass from its
+    distinct occurrences (`_occurrences`):
+
+    * Representative: the latest completed fresh occurrence (else the best
+      remaining by completed, fresh, time), ranked over event content only,
+      so the choice never depends on ingestion order (Codex P2, e44f0e8).
+    * Policy digest: the fingerprint binds the digest, so any verified copy
+      of any occurrence proves it for the whole run; an unverified or
+      partial copy can never erase it (Codex P2s, c92d872 / 7a0da7f). Two
+      different verified digests, or a decision.json that fails to verify
+      beside a verified one, is conflicting evidence and is flagged; the
+      former fails closed to unverified.
+    * History: every distinct occurrence is kept in `occurrence_log`; all
+      occurrence summaries and the head-selection timestamp
+      (`last_eligible_created_at`, completed-and-fresh only) are derived
+      from it (Codex P2s, 7a0da7f)."""
+    occs = _occurrences(group)
+    review_id = occs[0]["event"]["review_id"]
+    rep_occ = max(occs, key=lambda o: (o["event"]["final_status"] == "completed",
+                                        o["event"]["stale_state"] == "fresh",
+                                        _sort_key_ts(o["event"]["created_at"]),
+                                        o["log"]["policy_digest_verified"], o["key"]))
+    rep = {k: v for k, v in rep_occ["event"].items() if not k.startswith("_")}
+
+    verified = sorted({d for o in occs for d in o["verified_digests"]})
+    if len(verified) == 1:
+        rep["policy_bundle_digest"], rep["policy_digest_verified"] = verified[0], True
+    else:
+        rep["policy_bundle_digest"], rep["policy_digest_verified"] = None, False
+        if len(verified) > 1:
+            anomalies.append({"kind": "policy_digest_conflict", "review_id": review_id,
+                              "values": verified})
+    mismatched = sorted({s for o in occs for s in o["mismatch_sources"]})
+    if verified and mismatched:
+        anomalies.append({"kind": "policy_digest_evidence_conflict", "review_id": review_id,
+                          "sources": mismatched})
+
+    classes = sorted({str(o["event"]["classifier_class"]) for o in occs})
     if len(classes) > 1:
         anomalies.append({"kind": "classifier_class_differs_for_same_fingerprint",
-                          "review_id": rep["review_id"], "classes": classes})
-    rep["first_created_at"] = min((r["created_at"] for r, _ in group), key=_sort_key_ts)
-    rep["last_created_at"] = max((r["created_at"] for r, _ in group), key=_sort_key_ts)
-    fresh = [r["created_at"] for r, _ in group if r["stale_state"] == "fresh"]
-    rep["last_fresh_created_at"] = max(fresh, key=_sort_key_ts) if fresh else None
-    # Per-state counts over distinct payloads (byte-identical re-uploads count
-    # once), so a stale re-run collapsed into a fresh representative is still
-    # reported (Codex P2, d1e0437).
-    distinct: dict[bytes, dict[str, Any]] = {}
-    for r, _ in group:
-        distinct.setdefault(_event_bytes(r), r)
-    state_counts: dict[str, int] = {}
-    status_counts: dict[str, int] = {}
-    failure_counts: dict[str, int] = {}
-    for r in distinct.values():
-        state = str(r["stale_state"])
-        state_counts[state] = state_counts.get(state, 0) + 1
-        status_counts[r["final_status"]] = status_counts.get(r["final_status"], 0) + 1
-        if r["final_status"] == "failed":
-            # A failed occurrence keeps counting even when a later re-run of
-            # the same input completed and represents (Codex P2, c92d872).
-            mode = r["failure_mode"] or "unspecified"
-            failure_counts[mode] = failure_counts.get(mode, 0) + 1
-    rep["occurrence_stale_states"] = dict(sorted(state_counts.items()))
-    rep["occurrence_final_statuses"] = dict(sorted(status_counts.items()))
-    rep["occurrence_failure_modes"] = dict(sorted(failure_counts.items()))
+                          "review_id": review_id, "classes": classes})
+
+    log = [o["log"] for o in occs]
+
+    def _latest(pred) -> str | None:
+        stamps = [o["created_at"] for o in log if pred(o)]
+        return max(stamps, key=_sort_key_ts) if stamps else None
+
+    def _tally(values: list[str]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for v in values:
+            counts[v] = counts.get(v, 0) + 1
+        return dict(sorted(counts.items()))
+
+    rep["first_created_at"] = min((o["created_at"] for o in log), key=_sort_key_ts)
+    rep["last_created_at"] = _latest(lambda o: True)
+    rep["last_fresh_created_at"] = _latest(lambda o: o["stale_state"] == "fresh")
+    rep["last_eligible_created_at"] = _latest(_eligible)
+    rep["occurrence_stale_states"] = _tally([str(o["stale_state"]) for o in log])
+    rep["occurrence_final_statuses"] = _tally([o["final_status"] for o in log])
+    rep["occurrence_failure_modes"] = _tally([o["failure_mode"] or "unspecified"
+                                              for o in log if o["final_status"] == "failed"])
+    rep["occurrence_budget_exhausted"] = sum(1 for o in log if o["budget_exhausted"])
+    rep["occurrence_log"] = log
     rep["occurrences"] = len(group)
-    rep["distinct_payloads"] = len(distinct)
+    rep["distinct_payloads"] = len(log)
     rep["sources"] = sorted({s for _, s in group})
     return rep
 
@@ -357,16 +436,18 @@ def aggregate(input_dir: Path, *, generated_at: str,
             entry["repository_spellings"] = sorted([*entry["repository_spellings"],
                                                     run["repository"]])
 
-    # Current head: per PR, the head whose newest FRESH run is newest. A run
-    # whose freshness gate saw the head move (stale_*) never promotes its
-    # head; a PR with no fresh run has no current head at all.
+    # Current head: per PR, the head whose newest ELIGIBLE (completed and
+    # fresh) occurrence is newest. A failed or stale occurrence never
+    # promotes its head, even when collapsed into a run that also has an
+    # eligible occurrence; a PR with no eligible occurrence has no current head.
     head_latest: dict[tuple[str, int], dict[str, Any]] = {}
     all_prs = sorted({(k[0], k[1]) for k in entries_by_key})
     for (repo, pr, head, _), entry in entries_by_key.items():
-        fresh = [r["last_fresh_created_at"] for r in entry["runs"] if r["last_fresh_created_at"]]
-        if not fresh:
+        eligible = [r["last_eligible_created_at"] for r in entry["runs"]
+                    if r["last_eligible_created_at"]]
+        if not eligible:
             continue
-        latest = max(fresh, key=_sort_key_ts)
+        latest = max(eligible, key=_sort_key_ts)
         bucket = head_latest.setdefault((repo, pr), {})
         if head not in bucket or _sort_key_ts(latest) > _sort_key_ts(bucket[head]):
             bucket[head] = latest
@@ -374,8 +455,12 @@ def aggregate(input_dir: Path, *, generated_at: str,
     for pr_key in all_prs:
         if pr_key not in head_latest:
             current_head[pr_key] = None
-            anomalies.append({"kind": "no_fresh_run_for_pr", "repository": pr_key[0],
-                              "pr_number": pr_key[1]})
+            any_fresh = any(r["last_fresh_created_at"] for (repo, pr, _h, _d), e
+                            in entries_by_key.items() if (repo, pr) == pr_key for r in e["runs"])
+            # no_fresh: every occurrence was stale. no_eligible: fresh
+            # occurrences exist, but none of them completed.
+            anomalies.append({"kind": "no_eligible_run_for_pr" if any_fresh else "no_fresh_run_for_pr",
+                              "repository": pr_key[0], "pr_number": pr_key[1]})
             continue
         ranked = sorted(head_latest[pr_key].items(),
                         key=lambda hv: (_sort_key_ts(hv[1]), hv[0]), reverse=True)
@@ -526,7 +611,7 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
     counted: list[dict[str, Any]] = []
     for pr_key in sorted(per_pr):
         pairs = per_pr[pr_key]
-        entry, run = max(pairs, key=lambda er: (_sort_key_ts(er[1]["last_fresh_created_at"]),
+        entry, run = max(pairs, key=lambda er: (_sort_key_ts(er[1]["last_eligible_created_at"]),
                                                 er[1]["fingerprint"]))
         first_seen = min((r["first_created_at"] for _, r in pairs), key=_sort_key_ts)
         classes = sorted({str(r["classifier_class"]) for _, r in pairs})
@@ -602,15 +687,21 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         anomalies.append({"kind": "policy_digest_drift", "values": digests})
     if len(versions) > 1:
         anomalies.append({"kind": "reviewer_version_drift", "values": versions})
+    # Infrastructure health is occurrence-level and independent of the
+    # qualification decision above: every distinct execution occurrence of
+    # every real run (current or superseded) counts, so a successful retry
+    # never erases a failure or budget exhaustion that preceded it.
     stale_counts: dict[str, int] = {}
     failure_modes: dict[str, int] = {}
+    budget_occurrences = 0
     for run in all_real_runs:
-        per_state = run.get("occurrence_stale_states") or {run["stale_state"] or "unknown": 1}
-        for state, n in sorted(per_state.items()):
-            state = state if state and state != "None" else "unknown"
-            stale_counts[state] = stale_counts.get(state, 0) + n
-        for mode, n in sorted((run.get("occurrence_failure_modes") or {}).items()):
-            failure_modes[mode] = failure_modes.get(mode, 0) + n
+        for occ in run["occurrence_log"]:
+            state = occ["stale_state"] or "unknown"
+            stale_counts[state] = stale_counts.get(state, 0) + 1
+            if occ["final_status"] == "failed":
+                mode = occ["failure_mode"] or "unspecified"
+                failure_modes[mode] = failure_modes.get(mode, 0) + 1
+            budget_occurrences += 1 if occ["budget_exhausted"] else 0
 
     real_pr_count = len(counted)
     return {
@@ -655,8 +746,7 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
             "infrastructure_failures": {
                 "failed_runs": sum(failure_modes.values()),
                 "failure_modes": dict(sorted(failure_modes.items())),
-                "api_budget_exceeded_runs": sum(
-                    1 for r in all_real_runs if BUDGET_REASON in r["blocking_reasons"]),
+                "api_budget_exceeded_runs": budget_occurrences,
             },
         },
         "anomalies": _sorted_unique(anomalies),

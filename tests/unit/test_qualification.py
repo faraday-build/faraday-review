@@ -614,3 +614,239 @@ def test_multiple_distinct_failures_each_counted(tmp_path):
     text = json.dumps(_report(_ledger(tmp_path)))
     assert '"failed_runs": 3' in text
     assert '"api_timeout": 1' in text and '"runner_lost": 2' in text
+
+
+# ---------------- occurrence-level collapse (Codex P2s, 7a0da7f)
+# A. Current-head selection uses completed-and-fresh occurrences only, and
+#    verified evidence is reconciled across every occurrence of a run.
+def _entry(ledger: dict, head: str) -> dict:
+    (entry,) = [e for e in ledger["entries"] if e["head_sha"] == sha(head)]
+    return entry
+
+
+def test_later_failed_fresh_head_never_displaces_completed_fresh_head(tmp_path):
+    write_run(tmp_path, "a-ok", pr=1, head="h1", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path, "b-failed", pr=1, head="h2", created_at="2026-11-01T11:00:00Z",
+              final_status="failed", failure_mode="runner_lost")
+    ledger = _ledger(tmp_path)
+    assert _entry(ledger, "h1")["current"] is True
+    assert _entry(ledger, "h2")["current"] is False
+    report = _report(ledger)
+    assert report["real_pr_count"] == 1
+    assert report["counted_prs"][0]["head_sha"] == sha("h1")
+    assert report["drift"]["infrastructure_failures"]["failed_runs"] == 1
+
+
+def test_collapsed_failed_occurrence_does_not_promote_its_head(tmp_path):
+    # h2's run has an early completed-fresh occurrence and a later failed
+    # re-run of the same input; h1 completed fresh in between. Only h2's
+    # completed occurrence (10:00) competes, so h1 (10:30) stays current.
+    write_run(tmp_path, "h2-ok", pr=1, head="h2", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path, "h1-ok", pr=1, head="h1", created_at="2026-11-01T10:30:00Z")
+    write_run(tmp_path, "h2-failed", pr=1, head="h2", created_at="2026-11-01T11:00:00Z",
+              final_status="failed", failure_mode="runner_lost")
+    ledger = _ledger(tmp_path)
+    assert _entry(ledger, "h1")["current"] is True
+    assert _entry(ledger, "h2")["superseded"] is True
+    (h2_run,) = _entry(ledger, "h2")["runs"]
+    assert h2_run["last_eligible_created_at"] == "2026-11-01T10:00:00Z"
+    assert _report(ledger)["counted_prs"][0]["head_sha"] == sha("h1")
+
+
+def test_pr_with_only_failed_fresh_runs_has_no_current_head(tmp_path):
+    write_run(tmp_path, "f", pr=1, head="h1", final_status="failed", failure_mode="runner_lost")
+    ledger = _ledger(tmp_path)
+    entry = _entry(ledger, "h1")
+    assert entry["current"] is False and entry["superseded"] is False
+    assert any(a["kind"] == "no_eligible_run_for_pr" for a in ledger["anomalies"])
+    assert _report(ledger)["real_pr_count"] == 0
+
+
+def test_verified_digest_survives_when_unverified_occurrence_represents(tmp_path):
+    # The completed rerun was archived without decision.json; an earlier
+    # failed occurrence of the same input (same fingerprint) was verified.
+    # The fingerprint binds the digest, so the run keeps the verified one.
+    write_run(tmp_path, "a-failed", pr=1, head="h1", created_at="2026-11-01T10:00:00Z",
+              final_status="failed", failure_mode="runner_lost")
+    write_run(tmp_path, "b-ok", pr=1, head="h1", created_at="2026-11-01T10:05:00Z",
+              with_decision=False)
+    ledger = _ledger(tmp_path)
+    assert len(ledger["entries"]) == 1
+    (run,) = ledger["entries"][0]["runs"]
+    assert run["final_status"] == "completed"
+    assert run["policy_bundle_digest"] == DIGEST_A
+    assert run["policy_digest_verified"] is True
+    assert [o["policy_digest_verified"] for o in run["occurrence_log"]] == [True, False]
+    assert _report(ledger)["drift"]["policy_bundle_digests"] == [DIGEST_A]
+
+
+def test_conflicting_decision_evidence_is_flagged_and_verified_digest_kept(tmp_path):
+    import shutil
+    full = write_run(tmp_path, "a-full", pr=1, head="h1")
+    forged = tmp_path / "b-forged"
+    forged.mkdir()
+    shutil.copy(full / "telemetry.jsonl", forged / "telemetry.jsonl")
+    decision = json.loads((full / "decision.json").read_text())
+    decision["policy_digest"] = DIGEST_B
+    (forged / "decision.json").write_text(json.dumps(decision))
+    ledger = _ledger(tmp_path)
+    (run,) = ledger["entries"][0]["runs"]
+    assert run["policy_bundle_digest"] == DIGEST_A and run["policy_digest_verified"] is True
+    conflicts = [a for a in ledger["anomalies"] if a["kind"] == "policy_digest_evidence_conflict"]
+    assert conflicts and conflicts[0]["sources"] == ["b-forged/telemetry.jsonl"]
+
+
+@pytest.mark.parametrize("order", [(0, 1, 2), (2, 1, 0), (1, 2, 0)])
+def test_collapse_independent_of_ingestion_order(tmp_path, order):
+    import shutil
+
+    from faraday_review.telemetry import qualification as q
+    full = write_run(tmp_path / "src", "full", pr=1, head="h1", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path / "src", "retry", pr=1, head="h1", created_at="2026-11-01T10:00:00Z",
+              final_status="failed", failure_mode="runner_lost")
+    partial = tmp_path / "src" / "partial"
+    partial.mkdir()
+    shutil.copy(full / "telemetry.jsonl", partial / "telemetry.jsonl")
+    reference = None
+    for _ in range(2):
+        records = []
+        for name in ("full", "retry", "partial"):
+            d = tmp_path / "src" / name
+            event = json.loads((d / "telemetry.jsonl").read_text().splitlines()[0])
+            dec = d / "decision.json"
+            decision = json.loads(dec.read_text()) if dec.exists() else None
+            records.append((q._run_record(event, decision, f"{name}/telemetry.jsonl", []),
+                            f"{name}/telemetry.jsonl"))
+        out = canonical_bytes(q._collapse([records[i] for i in order], []))
+        reference = reference or out
+        assert out == reference
+    rep = json.loads(out)
+    assert rep["policy_digest_verified"] is True and rep["final_status"] == "completed"
+    assert rep["distinct_payloads"] == 2 and rep["occurrences"] == 3
+
+
+# B. Infrastructure health is occurrence-level and separate from qualification.
+def _infra(tmp_path: Path) -> dict:
+    return _report(_ledger(tmp_path))
+
+
+def test_budget_exhaustion_counted_when_rerun_succeeds(tmp_path):
+    write_run(tmp_path, "a-budget", pr=1, head="h1", created_at="2026-11-01T10:00:00Z",
+              cls="block", reasons=("github_api_budget_exceeded",))
+    write_run(tmp_path, "b-ok", pr=1, head="h1", created_at="2026-11-01T10:05:00Z")
+    report = _infra(tmp_path)
+    assert report["drift"]["infrastructure_failures"]["api_budget_exceeded_runs"] == 1
+    # Qualification sees only the counted (latest completed fresh) run.
+    assert report["escalation"]["api_budget_exceeded_escalations"] == 0
+    assert report["real_pr_count"] == 1
+    assert report["counted_prs"][0]["classifier_class"] == "yellow"
+
+
+def test_multiple_budget_exhaustions_each_counted_duplicates_once(tmp_path):
+    import shutil
+    for i in range(2):
+        write_run(tmp_path, f"budget-{i}", pr=1, head="h1", created_at=f"2026-11-01T10:0{i}:00Z",
+                  cls="block", reasons=("github_api_budget_exceeded",))
+    shutil.copytree(tmp_path / "budget-0", tmp_path / "budget-0-copy")
+    write_run(tmp_path, "ok", pr=1, head="h1", created_at="2026-11-01T10:09:00Z")
+    ledger = _ledger(tmp_path)
+    (run,) = ledger["entries"][0]["runs"]
+    assert run["occurrences"] == 4 and run["distinct_payloads"] == 3
+    assert run["occurrence_budget_exhausted"] == 2
+    assert _report(ledger)["drift"]["infrastructure_failures"]["api_budget_exceeded_runs"] == 2
+
+
+def test_stale_head_failures_and_budget_still_reported(tmp_path):
+    write_run(tmp_path, "old-budget", pr=1, head="h1", created_at="2026-11-01T09:00:00Z",
+              cls="block", reasons=("github_api_budget_exceeded",))
+    write_run(tmp_path, "old-failed", pr=1, head="h1", created_at="2026-11-01T09:30:00Z",
+              stale_state="stale_before_validation", final_status="failed",
+              failure_mode="runner_lost")
+    write_run(tmp_path, "new-ok", pr=1, head="h2", created_at="2026-11-01T10:00:00Z")
+    report = _infra(tmp_path)
+    infra = report["drift"]["infrastructure_failures"]
+    assert infra["api_budget_exceeded_runs"] == 1 and infra["failed_runs"] == 1
+    assert report["counted_prs"][0]["head_sha"] == sha("h2")
+
+
+def test_occurrence_log_retains_each_occurrence_in_time_order(tmp_path):
+    # Directory order (z, a, m) differs from time order.
+    write_run(tmp_path, "z-first", pr=1, head="h1", created_at="2026-11-01T10:00:00Z",
+              final_status="failed", failure_mode="api_timeout")
+    write_run(tmp_path, "a-third", pr=1, head="h1", created_at="2026-11-01T10:20:00Z")
+    write_run(tmp_path, "m-second", pr=1, head="h1", created_at="2026-11-01T10:10:00Z",
+              cls="block", reasons=("github_api_budget_exceeded",))
+    (run,) = _ledger(tmp_path)["entries"][0]["runs"]
+    log = run["occurrence_log"]
+    assert [o["created_at"] for o in log] == ["2026-11-01T10:00:00Z", "2026-11-01T10:10:00Z",
+                                              "2026-11-01T10:20:00Z"]
+    assert [o["final_status"] for o in log] == ["failed", "completed", "completed"]
+    assert [o["budget_exhausted"] for o in log] == [False, True, False]
+    assert [o["sources"] for o in log] == [["z-first/telemetry.jsonl"], ["m-second/telemetry.jsonl"],
+                                           ["a-third/telemetry.jsonl"]]
+    assert all(o["event_sha256"].startswith("sha256:") for o in log)
+
+
+def test_two_verified_digests_for_one_run_fail_closed():
+    # Not producible by honest artifacts (the fingerprint binds the digest);
+    # hand-built records prove the conflict branch fails closed.
+    from faraday_review.telemetry import qualification as q
+    base = {"review_id": "r", "fingerprint": "sha256:" + "f" * 64, "repository": REPO,
+            "pr_number": 1, "base_sha": sha("b"), "head_sha": sha("h"),
+            "reviewer_version": "x", "classifier_class": "green", "escalated": False,
+            "blocking_reasons": [], "stale_state": "fresh", "final_status": "completed",
+            "failure_mode": None, "created_at": "2026-11-01T10:00:00Z"}
+    a = {**base, "policy_bundle_digest": DIGEST_A, "policy_digest_verified": True,
+         "_decision_evidence": "verified"}
+    b = {**base, "created_at": "2026-11-01T10:01:00Z", "policy_bundle_digest": DIGEST_B,
+         "policy_digest_verified": True, "_decision_evidence": "verified"}
+    anomalies: list = []
+    rep = q._collapse([(a, "a"), (b, "b")], anomalies)
+    assert rep["policy_bundle_digest"] is None and rep["policy_digest_verified"] is False
+    assert {"kind": "policy_digest_conflict", "review_id": "r",
+            "values": [DIGEST_A, DIGEST_B]} in anomalies
+
+
+def test_counted_run_ranked_by_eligible_occurrence_not_later_failure(tmp_path):
+    # Two runs on the current head (different digests). Run A completed at
+    # 10:00 and failed on re-run at 12:00; run B completed at 11:00. B is the
+    # latest completed fresh run, so B is counted.
+    write_run(tmp_path, "a-ok", pr=1, head="h1", cls="yellow", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path, "a-failed", pr=1, head="h1", cls="yellow",
+              created_at="2026-11-01T12:00:00Z", final_status="failed", failure_mode="runner_lost")
+    write_run(tmp_path, "b-ok", pr=1, head="h1", cls="green", digest=DIGEST_B,
+              created_at="2026-11-01T11:00:00Z")
+    (counted,) = _report(_ledger(tmp_path))["counted_prs"]
+    assert counted["classifier_class"] == "green"
+
+
+def test_later_failed_retry_of_completed_input_keeps_completed_representative(tmp_path):
+    write_run(tmp_path, "a-ok", pr=1, head="h1", created_at="2026-11-01T10:00:00Z")
+    write_run(tmp_path, "b-failed", pr=1, head="h1", created_at="2026-11-01T11:00:00Z",
+              final_status="failed", failure_mode="runner_lost")
+    ledger = _ledger(tmp_path)
+    (run,) = ledger["entries"][0]["runs"]
+    assert run["final_status"] == "completed" and run["created_at"] == "2026-11-01T10:00:00Z"
+    report = _report(ledger)
+    assert report["real_pr_count"] == 1
+    assert report["drift"]["infrastructure_failures"]["failed_runs"] == 1
+
+
+def test_failed_occurrence_with_budget_failure_mode_counts_as_budget(tmp_path):
+    write_run(tmp_path, "a-budget", pr=1, head="h1", created_at="2026-11-01T10:00:00Z",
+              final_status="failed", failure_mode="github_api_budget_exceeded")
+    write_run(tmp_path, "b-ok", pr=1, head="h1", created_at="2026-11-01T10:05:00Z")
+    infra = _report(_ledger(tmp_path))["drift"]["infrastructure_failures"]
+    assert infra["api_budget_exceeded_runs"] == 1 and infra["failed_runs"] == 1
+
+
+def test_occurrence_verified_when_partial_copy_sorts_first(tmp_path):
+    import shutil
+    full = write_run(tmp_path, "b-full", pr=1, head="h1")
+    partial = tmp_path / "a-partial"
+    partial.mkdir()
+    shutil.copy(full / "telemetry.jsonl", partial / "telemetry.jsonl")
+    (run,) = _ledger(tmp_path)["entries"][0]["runs"]
+    (occ,) = run["occurrence_log"]
+    assert occ["policy_digest_verified"] is True and occ["copies"] == 2
+    assert occ["sources"] == ["a-partial/telemetry.jsonl", "b-full/telemetry.jsonl"]
