@@ -28,7 +28,8 @@ def write_run(root: Path, name: str, *, repo: str = REPO, pr: int = 1, head: str
               cls: str = "yellow", escalated: bool = True, created_at: str = "2026-11-01T10:00:00Z",
               digest: str = DIGEST_A, reviewer_version: str = REVIEWER_VERSION,
               reasons: tuple[str, ...] = (), stale_state: str = "fresh",
-              with_decision: bool = True) -> Path:
+              with_decision: bool = True, final_status: str = "completed",
+              failure_mode: str | None = None) -> Path:
     head_sha, base_sha = sha(head), sha("base")
     decision = {
         "contract_version": CONTRACT_VERSION,
@@ -54,8 +55,9 @@ def write_run(root: Path, name: str, *, repo: str = REPO, pr: int = 1, head: str
         duration_seconds=1.5,
         github_requests_used=7,
         retries=0,
-        final_status="completed",
+        final_status=final_status,
         created_at=created_at,
+        failure_mode=failure_mode,
     )
     run_dir = root / name
     append_event(event, root=run_dir)

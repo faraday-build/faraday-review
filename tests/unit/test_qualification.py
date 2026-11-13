@@ -572,3 +572,45 @@ def test_prior_ledger_cli_exit_2_when_input_missing(tmp_path):
     assert not out.exists()
     assert main(["aggregate", "--input-dir", str(tmp_path), "--output", str(out),
                  "--generated-at", TS, "--prior-ledger", str(prior_path)]) == 0
+
+
+# ---------------- verified evidence and failed occurrences survive collapse (Codex P2s, c92d872)
+def test_partial_copy_without_decision_never_erases_verified_digest(tmp_path):
+    import shutil
+    full = write_run(tmp_path, "a-full", pr=1, head="h1")
+    partial = tmp_path / "b-partial"
+    partial.mkdir()
+    shutil.copy(full / "telemetry.jsonl", partial / "telemetry.jsonl")
+    ledger = _ledger(tmp_path)
+    (run,) = ledger["entries"][0]["runs"]
+    assert run["policy_digest_verified"] is True
+    assert run["policy_bundle_digest"] == DIGEST_A
+    assert run["distinct_payloads"] == 1 and run["occurrences"] == 2
+    assert run["occurrence_stale_states"] == {"fresh": 1}
+    drift = _report(ledger)["drift"]
+    assert drift["policy_bundle_digests"] == [DIGEST_A]
+    assert drift["policy_digest_unverified_runs"] == 0
+
+
+def test_failed_occurrence_counted_when_rerun_completes(tmp_path):
+    write_run(tmp_path, "r1-failed", pr=1, head="h1", created_at="2026-11-01T10:00:00Z",
+              final_status="failed", failure_mode="runner_lost")
+    write_run(tmp_path, "r2-ok", pr=1, head="h1", created_at="2026-11-01T10:05:00Z")
+    ledger = _ledger(tmp_path)
+    (run,) = ledger["entries"][0]["runs"]
+    assert run["final_status"] == "completed"
+    assert run["occurrence_final_statuses"] == {"completed": 1, "failed": 1}
+    assert run["occurrence_failure_modes"] == {"runner_lost": 1}
+    infra = _report(ledger)
+    text = json.dumps(infra)
+    assert '"failed_runs": 1' in text and '"runner_lost": 1' in text
+
+
+def test_multiple_distinct_failures_each_counted(tmp_path):
+    for i, mode in enumerate(["runner_lost", "runner_lost", "api_timeout"]):
+        write_run(tmp_path, f"f{i}", pr=1, head="h1", created_at=f"2026-11-01T10:0{i}:00Z",
+                  final_status="failed", failure_mode=mode)
+    write_run(tmp_path, "ok", pr=1, head="h1", created_at="2026-11-01T10:09:00Z")
+    text = json.dumps(_report(_ledger(tmp_path)))
+    assert '"failed_runs": 3' in text
+    assert '"api_timeout": 1' in text and '"runner_lost": 2' in text

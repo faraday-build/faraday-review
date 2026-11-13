@@ -187,6 +187,16 @@ def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str
     }
 
 
+_DECISION_DERIVED = ("policy_bundle_digest", "policy_digest_verified")
+
+
+def _event_bytes(run: dict[str, Any]) -> bytes:
+    """Identity of the telemetry event itself. The digest fields are derived
+    from whether a decision.json sat next to the file, so a partial copy of
+    the same event is the same payload, not a new one (Codex P2, c92d872)."""
+    return canonical_bytes({k: v for k, v in run.items() if k not in _DECISION_DERIVED})
+
+
 def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str, Any]]) -> dict[str, Any]:
     """One run per (review_id, fingerprint): byte-identical uploads and
     same-input re-runs collapse. The LATEST completed fresh record represents,
@@ -196,8 +206,12 @@ def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str,
     last_fresh_created_at considers fresh occurrences only."""
     best = max(
         group,
+        # Verified evidence outranks the byte tie-breaker, so an identical
+        # event copied without its decision.json never erases a verified
+        # digest (Codex P2, c92d872).
         key=lambda rs: (rs[0]["final_status"] == "completed", rs[0]["stale_state"] == "fresh",
-                        _sort_key_ts(rs[0]["created_at"]), canonical_bytes(rs[0]), rs[1]),
+                        _sort_key_ts(rs[0]["created_at"]), rs[0]["policy_digest_verified"] is True,
+                        canonical_bytes(rs[0]), rs[1]),
     )
     rep = dict(best[0])
     classes = sorted({str(r["classifier_class"]) for r, _ in group})
@@ -211,15 +225,26 @@ def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str,
     # Per-state counts over distinct payloads (byte-identical re-uploads count
     # once), so a stale re-run collapsed into a fresh representative is still
     # reported (Codex P2, d1e0437).
-    distinct: dict[bytes, str] = {}
+    distinct: dict[bytes, dict[str, Any]] = {}
     for r, _ in group:
-        distinct.setdefault(canonical_bytes(r), str(r["stale_state"]))
+        distinct.setdefault(_event_bytes(r), r)
     state_counts: dict[str, int] = {}
-    for state in distinct.values():
+    status_counts: dict[str, int] = {}
+    failure_counts: dict[str, int] = {}
+    for r in distinct.values():
+        state = str(r["stale_state"])
         state_counts[state] = state_counts.get(state, 0) + 1
+        status_counts[r["final_status"]] = status_counts.get(r["final_status"], 0) + 1
+        if r["final_status"] == "failed":
+            # A failed occurrence keeps counting even when a later re-run of
+            # the same input completed and represents (Codex P2, c92d872).
+            mode = r["failure_mode"] or "unspecified"
+            failure_counts[mode] = failure_counts.get(mode, 0) + 1
     rep["occurrence_stale_states"] = dict(sorted(state_counts.items()))
+    rep["occurrence_final_statuses"] = dict(sorted(status_counts.items()))
+    rep["occurrence_failure_modes"] = dict(sorted(failure_counts.items()))
     rep["occurrences"] = len(group)
-    rep["distinct_payloads"] = len({canonical_bytes(r) for r, _ in group})
+    rep["distinct_payloads"] = len(distinct)
     rep["sources"] = sorted({s for _, s in group})
     return rep
 
@@ -584,9 +609,8 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         for state, n in sorted(per_state.items()):
             state = state if state and state != "None" else "unknown"
             stale_counts[state] = stale_counts.get(state, 0) + n
-        if run["final_status"] == "failed":
-            mode = run["failure_mode"] or "unspecified"
-            failure_modes[mode] = failure_modes.get(mode, 0) + 1
+        for mode, n in sorted((run.get("occurrence_failure_modes") or {}).items()):
+            failure_modes[mode] = failure_modes.get(mode, 0) + n
 
     real_pr_count = len(counted)
     return {

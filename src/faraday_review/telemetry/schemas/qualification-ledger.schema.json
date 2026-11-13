@@ -16,7 +16,7 @@
     "run": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["review_id", "fingerprint", "repository", "pr_number", "base_sha", "head_sha", "reviewer_version", "policy_bundle_digest", "policy_digest_verified", "classifier_class", "escalated", "blocking_reasons", "stale_state", "final_status", "failure_mode", "created_at", "first_created_at", "last_created_at", "last_fresh_created_at", "occurrence_stale_states", "occurrences", "distinct_payloads", "sources"],
+      "required": ["review_id", "fingerprint", "repository", "pr_number", "base_sha", "head_sha", "reviewer_version", "policy_bundle_digest", "policy_digest_verified", "classifier_class", "escalated", "blocking_reasons", "stale_state", "final_status", "failure_mode", "created_at", "first_created_at", "last_created_at", "last_fresh_created_at", "occurrence_stale_states", "occurrence_final_statuses", "occurrence_failure_modes", "occurrences", "distinct_payloads", "sources"],
       "properties": {
         "review_id": { "type": "string" },
         "fingerprint": { "$ref": "#/$defs/digest" },
@@ -37,6 +37,8 @@
         "first_created_at": { "type": "string", "format": "date-time" },
         "last_created_at": { "type": "string", "format": "date-time" },
         "occurrence_stale_states": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "occurrence_final_statuses": { "type": "object", "propertyNames": { "enum": ["completed", "failed"] }, "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "occurrence_failure_modes": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
         "last_fresh_created_at": {
           "description": "Newest created_at among occurrences with stale_state 'fresh'; null if none. Only fresh runs can make a head current.",
           "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
