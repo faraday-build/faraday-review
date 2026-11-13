@@ -269,8 +269,16 @@ def _cmd_adjudicate(args) -> int:
 
 
 def _cmd_aggregate(args) -> int:
+    prior = None
+    if args.prior_ledger:
+        try:
+            prior = json.loads(Path(args.prior_ledger).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise QualificationError(f"cannot read prior ledger {args.prior_ledger}: {exc}") from exc
+        if not isinstance(prior, dict):
+            raise QualificationError("prior ledger is not a JSON object")
     ledger = aggregate(Path(args.input_dir), generated_at=args.generated_at,
-                       founder_node_id=args.founder_node_id)
+                       founder_node_id=args.founder_node_id, prior_ledger=prior)
     code = _write_validated(Path(args.output), ledger, "qualification-ledger", "aggregate")
     if code == 0:
         print(f"aggregate: {ledger['counts']} anomalies={len(ledger['anomalies'])}", file=sys.stderr)
@@ -334,6 +342,8 @@ def main(argv: list[str] | None = None) -> int:
     agg.add_argument("--output", required=True)
     agg.add_argument("--generated-at", required=True, help="explicit ISO-8601 timestamp; no clock is read")
     agg.add_argument("--founder-node-id", default=DEFAULT_FOUNDER_NODE_ID)
+    agg.add_argument("--prior-ledger", default=None,
+                     help="previously committed ledger; every input it recorded must be present again")
 
     rdy = sub.add_parser("readiness", help="Phase 1 qualification gate report from a ledger")
     rdy.add_argument("--ledger", required=True)

@@ -224,11 +224,32 @@ def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str,
     return rep
 
 
+def _prior_inputs(prior_ledger: dict[str, Any], founder_node_id: str) -> set[tuple[str, str]]:
+    """(kind, sha256) of every input a previously committed ledger was built
+    from. The ledger is a summary, not a re-ingestible sample store, so a
+    later aggregation must re-fold the archived raw inputs; this set is what
+    proves none were dropped (Codex P2, 4d18890)."""
+    errors = local_validation_errors("qualification-ledger", prior_ledger)
+    if errors:
+        raise QualificationError(f"prior ledger fails qualification-ledger schema: {errors[:3]}")
+    if prior_ledger.get("format") != LEDGER_FORMAT:
+        raise QualificationError(f"prior ledger format {prior_ledger.get('format')!r} != {LEDGER_FORMAT}")
+    if prior_ledger.get("founder_node_id") != founder_node_id:
+        raise QualificationError("prior ledger founder_node_id differs from this aggregation")
+    return {(i["kind"], i["sha256"]) for i in prior_ledger["inputs"]}
+
+
 def aggregate(input_dir: Path, *, generated_at: str,
-              founder_node_id: str = DEFAULT_FOUNDER_NODE_ID) -> dict[str, Any]:
+              founder_node_id: str = DEFAULT_FOUNDER_NODE_ID,
+              prior_ledger: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Fold raw run artifacts into a ledger. With `prior_ledger`, every input
+    that ledger recorded must be present again (matched by kind + sha256,
+    any path), or aggregation fails closed: a later window can add samples
+    but can never silently lose earlier ones."""
     require_timestamp(generated_at, "generated_at")
     if not input_dir.is_dir():
         raise QualificationError(f"input dir {input_dir} is not a directory")
+    required_prior = _prior_inputs(prior_ledger, founder_node_id) if prior_ledger is not None else set()
 
     anomalies: list[dict[str, Any]] = []
     inputs: list[dict[str, Any]] = []
@@ -245,6 +266,13 @@ def aggregate(input_dir: Path, *, generated_at: str,
             continue
         inputs.append({"path": rel, "kind": wanted[path.name],
                        "sha256": _sha256_bytes(path.read_bytes())})
+
+    missing_prior = required_prior - {(i["kind"], i["sha256"]) for i in inputs}
+    if missing_prior:
+        sample = ", ".join(f"{k}:{h}" for k, h in sorted(missing_prior)[:3])
+        raise QualificationError(
+            f"{len(missing_prior)} input(s) recorded in the prior ledger are missing from "
+            f"{input_dir} (archive them under docs/qualification/artifacts/): {sample}")
 
     for path in paths:
         rel = path.relative_to(input_dir).as_posix()

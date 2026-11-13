@@ -510,3 +510,65 @@ def test_collapsed_stale_rerun_is_still_reported(tmp_path):
     report = _report(ledger)
     assert report["real_pr_count"] == 1
     assert report["drift"]["stale_state_counts"] == {"fresh": 1, "stale_before_publication": 1}
+
+
+# ---------------- prior-ledger continuity across retention windows (Codex P2, 4d18890)
+def _window_one(root: Path) -> dict:
+    write_real_prs(root, 12)
+    return _ledger(root)
+
+
+def test_prior_ledger_inputs_all_present_keeps_earlier_samples(tmp_path):
+    archive = tmp_path / "archive"
+    prior = _window_one(archive)
+    # Window 2: archived window-1 artifacts plus 8 new runs.
+    write_real_prs(archive, 8, start=13)
+    ledger = aggregate(archive, generated_at=TS, prior_ledger=prior)
+    assert local_validation_errors("qualification-ledger", ledger) == []
+    assert ledger["counts"]["entries"] == 20
+    assert _report(ledger)["gate"]["met"] is True
+
+
+def test_prior_ledger_input_missing_fails_closed(tmp_path):
+    first = tmp_path / "w1"
+    prior = _window_one(first)
+    # Window 2 with only fresh downloads: window-1 artifacts expired, not archived.
+    second = tmp_path / "w2"
+    write_real_prs(second, 8, start=13)
+    with pytest.raises(QualificationError, match="recorded in the prior ledger are missing"):
+        aggregate(second, generated_at=TS, prior_ledger=prior)
+
+
+def test_prior_ledger_matches_by_hash_not_path(tmp_path):
+    import shutil
+    first = tmp_path / "w1"
+    prior = _window_one(first)
+    archive = tmp_path / "archive" / "window-1"
+    shutil.copytree(first, archive)
+    assert aggregate(tmp_path / "archive", generated_at=TS, prior_ledger=prior)["counts"]["entries"] == 12
+
+
+def test_prior_ledger_tampered_or_foreign_rejected(tmp_path):
+    prior = _window_one(tmp_path)
+    with pytest.raises(QualificationError, match="founder_node_id"):
+        aggregate(tmp_path, generated_at=TS, prior_ledger=prior, founder_node_id="U_other")
+    bad = dict(prior, format="faraday-review/qualification-ledger/v0")
+    with pytest.raises(QualificationError):
+        aggregate(tmp_path, generated_at=TS, prior_ledger=bad)
+    with pytest.raises(QualificationError, match="schema"):
+        aggregate(tmp_path, generated_at=TS, prior_ledger={"inputs": []})
+
+
+def test_prior_ledger_cli_exit_2_when_input_missing(tmp_path):
+    first, second = tmp_path / "w1", tmp_path / "w2"
+    prior_path = tmp_path / "prior.json"
+    write_real_prs(first, 3)
+    assert main(["aggregate", "--input-dir", str(first), "--output", str(prior_path),
+                 "--generated-at", TS]) == 0
+    write_real_prs(second, 2, start=4)
+    out = tmp_path / "next.json"
+    assert main(["aggregate", "--input-dir", str(second), "--output", str(out),
+                 "--generated-at", TS, "--prior-ledger", str(prior_path)]) == 2
+    assert not out.exists()
+    assert main(["aggregate", "--input-dir", str(tmp_path), "--output", str(out),
+                 "--generated-at", TS, "--prior-ledger", str(prior_path)]) == 0

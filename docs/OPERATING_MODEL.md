@@ -41,17 +41,25 @@ cross-PR record. The durable path is:
 1. Each shadow run uploads its artifacts dir (`telemetry.jsonl`,
    `decision.json`, and `adjudications.jsonl` when a label event ran
    `faraday-review adjudicate`) as a GitHub Actions artifact.
-2. **Run artifacts are retained 90 days.** They are raw inputs, not the
-   record of truth; their expiry loses nothing once step 3 has run.
-3. The operator downloads the artifacts into one directory and runs
-   `faraday-review aggregate` then `faraday-review readiness` (commands in
-   `PHASE_2_INPUTS.md`). The resulting **ledger + readiness report are the
-   durable record**: committed by PR under `docs/qualification/`, signed,
-   through the required checks — well inside the 90-day window.
-4. The ledger and readiness report record the sha256 of every input file,
-   so a committed report is auditable against the artifacts it came from.
-5. Committed ledgers and readiness reports are **never deleted during
-   rollback** (see `ROLLBACK.md`); rollback removes observation, not the
+2. **Run artifacts are retained 90 days.** They are raw inputs. The
+   ledger is a summary, not a re-ingestible sample store, so the raw
+   inputs must outlive the artifacts.
+3. Within the 90-day window the operator downloads each artifact and
+   **archives its files by PR under `docs/qualification/artifacts/<artifact
+   name>/`** (small JSONL/JSON files; never deleted, like the ledger).
+4. The operator runs `faraday-review aggregate --input-dir
+   docs/qualification/artifacts --prior-ledger <last committed ledger>`
+   then `faraday-review readiness` (commands in `PHASE_2_INPUTS.md`). Every
+   aggregation re-folds the **whole archive**, so samples from earlier
+   retention windows are kept. `--prior-ledger` fails closed (exit 2) if
+   any input the previous ledger recorded (matched by kind + sha256) is
+   missing, so a later window can add samples but never silently drop
+   them. The ledger + readiness report are committed by PR under
+   `docs/qualification/`, signed, through the required checks.
+   The ledger and readiness report record the sha256 of every input file,
+   so a committed report is auditable against the archived artifacts.
+5. Archived artifacts, committed ledgers and readiness reports are
+   **never deleted during rollback** (see `ROLLBACK.md`); rollback removes observation, not the
    calibration record.
 
 Adjudications are matched on the founder `node_id` (`U_kgDODk3msA`),
