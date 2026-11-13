@@ -225,7 +225,9 @@ protection on public repos; it is free.
   of the bundle directory at that tag.
 - Validator: this repo, console script `faraday-validator`, subcommand
   `evaluate-pr`.
-- Shadow workflow: new `reusable-faraday-review.yml` +
+- Shadow workflow (superseded — see DEPLOYMENT.md "Reusable workflow
+  location"; it now lives in this repo as `.github/workflows/shadow.yml`):
+  originally planned as `reusable-faraday-review.yml` +
   `workflow-templates/faraday-review.yml` in `tomrivera-ops/.github`,
   meeting this repo's hardening guard even where org convention is
   looser.
