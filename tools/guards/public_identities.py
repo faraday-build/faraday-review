@@ -22,11 +22,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 IDENTITY_KEYS = ("repository", "caller_repo")
 IDENTITY_LIST_KEYS = ("repository_spellings",)
+# Archive-relative provenance paths (<owner>/<repo>/<run>/...) name their
+# repository too; a path without that provenance fails closed (Codex P2, #11).
+PATH_KEYS = ("path", "source", "sources")
+ROOT_MANIFEST_RE = re.compile(r"^collection-manifest-[0-9TZ]+\.json$")
+UNPROVABLE = "\x00unprovable:"
 REPORTS = ("ledger.json", "readiness.json")
 MANIFEST_GLOB = "collection-manifest-*.json"
 
@@ -42,11 +48,28 @@ def named(document) -> set[str]:
                     found.add(value.casefold())
                 elif key in IDENTITY_LIST_KEYS and isinstance(value, list):
                     found.update(v.casefold() for v in value if isinstance(v, str))
+                elif key in PATH_KEYS and isinstance(value, (str, list)):
+                    for path in ([value] if isinstance(value, str) else value):
+                        if isinstance(path, str):
+                            found.update(_path_identity(path))
+                        else:
+                            stack.append(path)
                 else:
                     stack.append(value)
         elif isinstance(node, list):
             stack.extend(node)
     return found
+
+
+def _path_identity(path: str) -> set[str]:
+    """<owner>/<repo> of an archive path; an unprovable path yields a
+    sentinel that is never public."""
+    parts = path.split("/")
+    if len(parts) == 1 and ROOT_MANIFEST_RE.match(path):
+        return set()
+    if len(parts) >= 3 and parts[0] and parts[1]:
+        return {f"{parts[0]}/{parts[1]}".casefold()}
+    return {UNPROVABLE + path}
 
 
 def _load(path: Path):

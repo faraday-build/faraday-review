@@ -253,7 +253,13 @@ enrolled as public:
   checkout's `docs/qualification/enrollment.json`). Outside a checkout (the
   private side) nothing is checked.
 - Neither prints the identity it refuses. Identities are read from the
-  `repository`, `caller_repo` and `repository_spellings` fields.
+  `repository`, `caller_repo` and `repository_spellings` fields, and from
+  archive provenance paths (`path`, `source`, `sources`): `collect` lays the
+  archive out as `<owner>/<repo>/<run>/...`, so a path names its repository
+  by its first two components. A path whose repository cannot be
+  established (other than a root `collection-manifest-*.json`) fails closed.
+- An occurrence whose telemetry omits the escalation field has no recorded
+  `escalated` in the ledger; its O2 prediction is `unknown`, never false.
 
 Known limits, unchanged by v3: "policy digest verified" means the digest is
 consistent with the run's own `decision.json` and, with no

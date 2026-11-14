@@ -82,10 +82,50 @@ def test_explicit_enrollment_is_used(tmp_path):
 
 
 def _inputs(tmp_path: Path, repo: str) -> Path:
+    """Laid out like `collect`'s archive: <owner>/<repo>/<run>/<file>."""
     src = tmp_path / "in"
-    write_real_prs(src, 2, repo=repo)
-    write_label(src, "l1", repo=repo, pr=1, head="h1")
+    write_real_prs(src / repo, 2, repo=repo)
+    write_label(src / repo, "l1", repo=repo, pr=1, head="h1")
     return src
+
+
+def test_provenance_paths_name_repositories():
+    doc = {"inputs": [{"path": "Owner/Repo/1/a/telemetry.jsonl"},
+                      {"path": "collection-manifest-20261114T000000Z.json"}],
+           "anomalies": [{"source": "o2/r2/1/x/telemetry.jsonl"},
+                         {"sources": ["o3/r3/9/telemetry.jsonl"]}]}
+    enrollment = [{"repository": r, "visibility": "public", "workflow": WF}
+                  for r in ("owner/repo", "o2/r2", "o3/r3")]
+    assert public_identity_violations(doc, enrollment) == 0
+    assert public_identity_violations(doc, enrollment[:2]) == 1
+
+
+def test_identity_only_in_archive_path_is_refused(tmp_path):
+    """Codex P2 (#11): malformed telemetry leaves the identity only in
+    inputs[].path / anomaly sources; it must still be checked."""
+    enrollment = [{"repository": PUBLIC, "visibility": "public", "workflow": WF}]
+    doc = {"inputs": [{"path": f"{PRIVATE}/7/art/telemetry.jsonl", "kind": "telemetry"}],
+           "anomalies": [{"kind": "invalid_telemetry_event",
+                          "source": f"{PRIVATE}/7/art/telemetry.jsonl"}]}
+    assert public_identity_violations(doc, enrollment) == 1
+
+
+def test_path_without_repository_provenance_fails_closed():
+    enrollment = [{"repository": PUBLIC, "visibility": "public", "workflow": WF}]
+    assert public_identity_violations({"inputs": [{"path": "telemetry.jsonl"}]}, enrollment) == 1
+    assert public_identity_violations({"sources": ["loose/telemetry.jsonl"]}, enrollment) == 1
+
+
+def test_cli_refuses_private_path_only_identity(tmp_path, capsys):
+    src = tmp_path / "in" / PRIVATE / "7" / "art"
+    src.mkdir(parents=True)
+    (src / "telemetry.jsonl").write_text("{not json\n")
+    repo = _checkout(tmp_path / "repo", [(PUBLIC, "public")])
+    out = repo / "docs" / "qualification" / "ledger.json"
+    assert main(["aggregate", "--input-dir", str(tmp_path / "in"), "--output", str(out),
+                 "--generated-at", TS]) == 2
+    assert not out.exists()
+    assert "secret-thing" not in capsys.readouterr().err
 
 
 def test_cli_aggregate_refuses_private_identity_in_public_checkout(tmp_path, capsys):

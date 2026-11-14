@@ -294,6 +294,11 @@ def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str
     }
 
 
+def _recorded_escalation(raw: dict[str, Any]) -> dict[str, bool]:
+    value = raw.get("founder_review_required")
+    return {"escalated": value} if isinstance(value, bool) else {}
+
+
 _DECISION_DERIVED = ("policy_bundle_digest", "policy_digest_verified", "_decision_evidence")
 
 
@@ -348,7 +353,9 @@ def _occurrences(group: list[tuple[dict[str, Any], str]],
                 "failure_mode": event["failure_mode"],
                 "stale_state": event["stale_state"],
                 "classifier_class": event["classifier_class"],
-                "escalated": event["escalated"],
+                # Only a recorded boolean; an absent field stays absent so
+                # the O2 prediction is unknown, never false (Codex P1, #11).
+                **_recorded_escalation(first["_raw"]),
                 "blocking_reasons": event["blocking_reasons"],
                 "budget_exhausted": _budget_exhausted(event),
                 "policy_digest_verified": "verified" in evidence,

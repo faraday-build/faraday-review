@@ -16,6 +16,7 @@ Every scenario runs the real `aggregate` and `readiness`; nothing is mocked.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -299,3 +300,30 @@ def test_default_requirements_are_the_released_ones(tmp_path):
 
 def test_format_is_v4(tmp_path):
     assert _report(tmp_path)["format"] == "faraday-review/qualification-readiness/v4"
+
+
+# ------------------------------------- Codex P1 (#11): absent prediction
+
+
+def _strip_escalation(run_dir: Path) -> None:
+    path = run_dir / "telemetry.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    for row in rows:
+        row.pop("founder_review_required", None)
+    path.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+
+
+def test_absent_escalation_in_telemetry_is_unknown_not_false(tmp_path):
+    for pr in range(1, 21):
+        _pr(tmp_path, pr, cls="green", founder="green")
+        _strip_escalation(tmp_path / f"run-{pr}")
+    _pr(tmp_path, 21)  # one correctly escalated mandatory PR
+    ledger = aggregate(tmp_path, generated_at=TS)
+    occ = next(e for e in ledger["entries"] if e["pr_number"] == 1)["runs"][0]["occurrence_log"][0]
+    assert "escalated" not in occ
+    report = _report(tmp_path)
+    acc = report["escalation_accuracy"]
+    assert acc["unknown"] == 20
+    assert {p["reason"] for p in acc["unknown_prs"]} == {"prediction_unknown"}
+    assert report["gate"]["escalation_condition"]["status"] == "unknown"
+    assert report["gate"]["met"] is False

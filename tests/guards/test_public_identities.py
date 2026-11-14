@@ -89,3 +89,30 @@ def test_unreadable_report_fails_closed(tmp_path):
 
 def test_no_reports_passes_vacuously(tmp_path):
     assert _run(_qual(tmp_path, None)).returncode == 0
+
+
+def test_identity_only_in_input_path_fails(tmp_path):
+    """Codex P2 (#11): an archive path names its repository too."""
+    qual = _qual(tmp_path, [(PUBLIC, "public")])
+    (qual / "ledger.json").write_text(json.dumps(
+        {"inputs": [{"path": f"{PRIVATE}/7/art/telemetry.jsonl"}],
+         "anomalies": [{"source": f"{PRIVATE}/7/art/telemetry.jsonl"}]}))
+    proc = _run(qual)
+    assert proc.returncode == 1
+    assert "secret-thing" not in proc.stdout + proc.stderr
+
+
+def test_public_input_paths_and_root_manifest_pass(tmp_path):
+    qual = _qual(tmp_path, [(PUBLIC, "public")])
+    (qual / "readiness.json").write_text(json.dumps(
+        {"evidence": {"ledger_inputs": [
+            {"path": "Faraday-Build/pilot/7/art/telemetry.jsonl"},
+            {"path": "collection-manifest-20261114T000000Z.json"}]},
+         "anomalies": [{"sources": ["faraday-build/pilot/7/art/telemetry.jsonl"]}]}))
+    assert _run(qual).returncode == 0
+
+
+def test_path_without_provenance_fails_closed(tmp_path):
+    qual = _qual(tmp_path, [(PUBLIC, "public")])
+    (qual / "ledger.json").write_text(json.dumps({"inputs": [{"path": "run-1/telemetry.jsonl"}]}))
+    assert _run(qual).returncode == 1
