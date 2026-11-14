@@ -291,6 +291,31 @@ def test_t04c_integral_float_run_fields_are_the_same_execution(tmp_path):
     assert _only_run(ledger)["executions_exact"] == 1
 
 
+def test_t04d_duplicate_execution_descriptor_is_location_independent(tmp_path):
+    """Codex P2 (#7 full-diff review, qualification.py:443). With 101 and
+    101.0 for one execution, the multiple_events_per_execution descriptor
+    must not depend on which archive location is visited last (C9). It
+    carries normalized ints; occurrence records keep the raw form."""
+    float_exec = {"provider": "github_actions", "run_id": 101.0, "run_attempt": 1.0}
+    descriptors = []
+    for layout, (first, second) in enumerate((((E1, gha(101, 1)), (E2, float_exec)),
+                                              ((E2, float_exec), (E1, gha(101, 1))))):
+        root = tmp_path / f"layout{layout}"
+        root.mkdir()
+        write_run(root, "a", event_id=first[0], execution=first[1])
+        write_run(root, "b", event_id=second[0], execution=second[1])
+        ledger = _ledger(root)
+        [anomaly] = [a for a in ledger["anomalies"]
+                     if a["kind"] == "multiple_events_per_execution"]
+        descriptors.append(canonical_bytes(anomaly))
+        assert anomaly["execution"]["run_id"] == 101
+        assert type(anomaly["execution"]["run_id"]) is int
+        assert type(anomaly["execution"]["run_attempt"]) is int
+        assert sorted(type(o["execution"]["run_id"]).__name__
+                      for o in _only_run(ledger)["occurrence_log"]) == ["float", "int"]
+    assert descriptors[0] == descriptors[1]
+
+
 def test_t18d_integral_float_run_fields_match_the_binding(tmp_path):
     good = write_run(tmp_path, "good", pr=1, event_id=E1,
                      execution={"provider": "github_actions", "run_id": 101.0, "run_attempt": 1.0})

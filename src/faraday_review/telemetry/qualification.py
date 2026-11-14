@@ -439,8 +439,14 @@ def _identity_scan(raw_runs: list[tuple[dict[str, Any], str]],
         if run["_execution"] is None or run["_key_value"] in conflicted:
             continue
         by_execution.setdefault(run["_execution_key"], set()).add(run["_event_key"])
-        described[run["_execution_key"]] = {**run["_execution"],
-                                            "repository": repo_identity(run["repository"])}
+        # Built from the identity inputs only (normalized ints, casefolded
+        # repository), so every copy of one execution describes it in the
+        # same bytes and the anomaly does not depend on visit order (C9;
+        # Codex P2, #7 full diff). Occurrence records keep the raw form.
+        run_id, run_attempt = _run_numbers(run["_execution"])
+        described[run["_execution_key"]] = {
+            "provider": run["_execution"]["provider"], "run_id": run_id,
+            "run_attempt": run_attempt, "repository": repo_identity(run["repository"])}
     for key in sorted(by_execution):
         if len(by_execution[key]) > 1:
             anomalies.append({"kind": "multiple_events_per_execution", "execution_key": key,
