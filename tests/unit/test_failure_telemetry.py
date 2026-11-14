@@ -467,3 +467,66 @@ def test_first_head_fetch_failure_leaves_freshness_unknown(offline, tmp_path, mo
     (event,) = _lines(out)
     assert event["failure_mode"] == "github_api_budget_exceeded"
     assert "stale_state" not in event
+
+
+# ------------------------------------------------------------ Codex round 3 (c35fab1)
+
+
+def _ctx_doc(offline, **over):
+    doc = offline["context"].to_json()
+    doc.update(over)
+    return doc
+
+
+def test_record_failure_uses_persisted_context_when_no_decision(offline, tmp_path):
+    """Codex P2 #8 cli.py:400: killed after pr-context.json, before
+    decision.json. Identity precedence is decision -> context -> payload,
+    so the collected head/base win over the (stale) payload SHAs."""
+    out = tmp_path / "a"
+    out.mkdir()
+    ctx = offline["context"]
+    assert (ctx.head_sha, ctx.base_sha) != (HEAD, BASE)
+    (out / "pr-context.json").write_text(json.dumps(_ctx_doc(offline)))
+    assert cli.main(["record-failure", "--repository", offline["repo"], "--pr", str(offline["pr"]),
+                     "--head-sha", HEAD, "--base-sha", BASE, "--run-id", "43507102983",
+                     "--run-attempt", "2", "--failure-mode", "workflow_step_cancelled",
+                     "--artifacts-dir", str(out)]) == 0
+    (event,) = _lines(out)
+    assert validation_errors("review-telemetry-event", event) == []
+    assert (event["head_sha"], event["base_sha"]) == (ctx.head_sha, ctx.base_sha)
+    assert "risk_class" not in event
+
+
+@pytest.mark.parametrize("tamper", [{"repository": "other/repo"}, {"pr_number": 999},
+                                    {"head_sha": "zz"}, {"base_sha": None}, "not-json", "[]"])
+def test_record_failure_ignores_a_foreign_or_broken_context(offline, tmp_path, tamper):
+    out = tmp_path / "a"
+    out.mkdir()
+    if isinstance(tamper, dict):
+        (out / "pr-context.json").write_text(json.dumps(_ctx_doc(offline, **tamper)))
+    else:
+        (out / "pr-context.json").write_text(tamper)
+    assert cli.main(["record-failure", "--repository", offline["repo"], "--pr", str(offline["pr"]),
+                     "--head-sha", HEAD, "--base-sha", BASE, "--run-id", "43507102983",
+                     "--run-attempt", "2", "--failure-mode", "workflow_step_failed",
+                     "--artifacts-dir", str(out)]) == 0
+    (event,) = _lines(out)
+    _assert_failed(event, "workflow_step_failed", head=HEAD, base=BASE)
+
+
+def test_record_failure_decision_still_beats_context(offline, tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise PublicationError("killed mid-publication")
+    monkeypatch.setattr(cli, "publish_check_run", boom)
+    out = tmp_path / "a"
+    assert _shadow(offline, out, publish=True) == 2
+    decision = json.loads((out / "decision.json").read_text())
+    (out / "telemetry.jsonl").unlink()
+    other = "f" * 40
+    (out / "pr-context.json").write_text(json.dumps(_ctx_doc(offline, head_sha=other)))
+    assert cli.main(["record-failure", "--repository", offline["repo"], "--pr", str(offline["pr"]),
+                     "--head-sha", HEAD, "--base-sha", BASE, "--run-id", "43507102983",
+                     "--run-attempt", "2", "--failure-mode", "workflow_step_cancelled",
+                     "--artifacts-dir", str(out)]) == 0
+    (event,) = _lines(out)
+    assert event["head_sha"] == decision["head_sha"] != other
