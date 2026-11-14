@@ -115,3 +115,50 @@ def test_deleted_ledger_with_prior_ledger_fails(tmp_path):
                            "--prior-ledger", str(prior)], capture_output=True, text=True)
     assert proc.returncode == 1
     assert "prior ledger" in proc.stderr
+
+
+def _commit_library_readiness(qual: Path, released) -> None:
+    """A readiness written through the library with a released-digest policy
+    the CLI never produces (null = not enforced, or an empty list)."""
+    import json
+
+    from faraday_review.canonical import write_canonical
+    from faraday_review.telemetry.qualification import file_evidence, readiness
+
+    _commit_ledger(qual, with_readiness=False)
+    ledger_path, synth_path = qual / "ledger.json", qual / "synthetic-prs.json"
+    report = readiness(json.loads(ledger_path.read_text()), [], generated_at=TS,
+                       released_policy_digests=released,
+                       ledger_evidence=file_evidence(ledger_path),
+                       synthetic_evidence=file_evidence(synth_path))
+    write_canonical(qual / "readiness.json", report)
+
+
+def test_unenforced_released_digest_policy_is_rejected_explicitly(tmp_path):
+    # Codex P2 (#9): a null policy must not be silently replayed under the CLI
+    # default. Committed readiness must enforce D9, so it is refused by name.
+    _commit_library_readiness(tmp_path, None)
+    proc = _run(tmp_path)
+    assert proc.returncode == 1
+    assert "released_policy_digests" in proc.stderr
+    assert "does not reproduce" not in proc.stderr
+
+
+def test_empty_released_digest_policy_is_rejected_explicitly(tmp_path):
+    _commit_library_readiness(tmp_path, [])
+    proc = _run(tmp_path)
+    assert proc.returncode == 1
+    assert "released_policy_digests" in proc.stderr
+    assert "does not reproduce" not in proc.stderr
+
+
+def test_recorded_non_default_released_digests_are_replayed(tmp_path):
+    from qualification_support import DIGEST_B
+
+    _commit_ledger(tmp_path, with_readiness=False)
+    assert cli.main(["readiness", "--ledger", str(tmp_path / "ledger.json"), "--synthetic",
+                     str(tmp_path / "synthetic-prs.json"), "--generated-at", TS,
+                     "--released-policy-digest", DIGEST_B,
+                     "--output", str(tmp_path / "readiness.json")]) == 0
+    proc = _run(tmp_path)
+    assert proc.returncode == 0, proc.stderr
