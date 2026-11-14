@@ -58,7 +58,25 @@ digests are flagged `policy_digest_conflict` and fail closed to unverified.
 Infrastructure health (`drift.stale_state_counts`,
 `drift.infrastructure_failures`) counts occurrences, so a successful retry
 never erases an earlier failure or budget exhaustion; the qualification
-fields (`real_pr_count`, `escalation.*`) use only the counted run. `gate.met` is `real_pr_count >= 20`; the
+fields (`real_pr_count`, `escalation.*`) use only the counted run.
+
+**Execution identity** (agent-contracts v0.4.0; normative rules in
+`src/faraday_review/schemas/review-telemetry-identity.md`). Each shadow
+run emits a fresh `event_id` and its GitHub `execution` (`run_id`,
+`run_attempt`). Copies of an event are one occurrence: the key is the
+`event_id`, or for a v0.3.0 record a content key over the full record. An
+`event_id` claimed by different content is `event_id_conflict`. That
+event is ineligible: it never counts, selects a head, verifies a digest or
+enters an infrastructure tally. Two events claiming one execution are
+`multiple_events_per_execution`, and the execution counts once. v0.3.0
+records have no execution identity and none is synthesized:
+`execution_count` is `null` with `execution_count_bounds`, and
+`infrastructure_failures.status` is `bounded` with per-tally `bounds`.
+The figure given is the lower bound (distinct events). Identity never
+changes `real_pr_count`: it is still one counted run per real PR on its
+current head, with the 20-PR floor. `review_id` (review subject),
+`fingerprint` (input digest) and `retries` (in-run API retries) keep their
+meaning; none of them is an execution identity. `gate.met` is `real_pr_count >= 20`; the
 threshold cannot be configured below 20. Founder labels are recorded with
 `faraday-review adjudicate` and attached only to the exact head SHA they
 were applied to. The report also carries agreement (confusion matrix,

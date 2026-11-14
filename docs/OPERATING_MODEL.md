@@ -72,7 +72,12 @@ entry is rejected. Only completed occurrences whose freshness gates passed
 (`stale_state: fresh`) count or select a PR's current head; stale-but-
 completed runs and failed occurrences are kept in the ledger
 (`occurrence_log`) as evidence and never counted. Infrastructure-health
-counts are occurrence-level and kept separate from the qualification count.
+counts are execution-level and kept separate from the qualification count.
+Executions are identified by the v0.4.0 `execution` field and deduplicated
+across runs. Pre-v0.4.0 records give bounded, not exact, tallies (see
+`PHASE_2_INPUTS.md`). Ledgers are `qualification-ledger/v2`.
+`--prior-ledger` also accepts a committed v1 ledger, because continuity is
+checked on inputs, which v1 and v2 record identically.
 The real-PR gate threshold has a hard floor of 20; `readiness` exits 2 on
 any lower value.
 

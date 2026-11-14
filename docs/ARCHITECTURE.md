@@ -60,6 +60,26 @@ Ruling 16: evidence contract minor N and N-1 accepted;
 `evaluated_contract_minor` recorded in every decision. The evidence
 envelope is `PullRequestReviewEvidence` — distinct from the TR-004
 `ReviewEvidence` session artifact (one authority per contract name).
+`schemas/VENDORED.json` pins every vendored byte to the release manifest.
+
+### Telemetry identity
+
+`schemas/review-telemetry-identity.md` (vendored, normative) defines event,
+execution, attempt and archived-copy identity.
+
+- **Producer:** `cli.py shadow-run` emits one record per invocation with a
+  fresh `event_id`. `shadow.yml` passes `github.run_id` and
+  `github.run_attempt` as `--run-id`/`--run-attempt`, which become
+  `execution`.
+- **Consumer:** `telemetry/qualification.py` checks C4 (conflicts) and C7
+  (duplicate executions) over the whole input before grouping runs. It then
+  derives occurrences and the C8 counts and bounds.
+  `tests/unit/test_identity_conformance.py` runs the contract's own
+  conformance vectors through `aggregate`. The contract's `invalid_record`
+  is this repo's `invalid_telemetry_event`.
+- **Cross-check:** `run-binding.json`, written by the workflow, is checked
+  against v0.4.0 records only. A mismatch is reported and never changes a
+  count.
 
 ## Policy
 
