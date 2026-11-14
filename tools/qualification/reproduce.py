@@ -66,6 +66,8 @@ def _main(argv: list[str] | None = None) -> int:
                         "--generated-at", str(ready.get("generated_at")),
                         "--threshold", str(ready.get("gate", {}).get("threshold")),
                         "--output", str(rout)]
+            for digest in ready.get("gate", {}).get("released_policy_digests") or []:
+                argv_rdy += ["--released-policy-digest", str(digest)]
             if cli(argv_rdy) != 0:
                 print("reproduce: readiness failed over the committed ledger", file=sys.stderr)
                 return 1

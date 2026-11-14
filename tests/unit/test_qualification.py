@@ -19,6 +19,7 @@ from qualification_support import (
 
 from faraday_review.canonical import canonical_bytes, read_canonical
 from faraday_review.cli import main
+from faraday_review.github.preflight import RELEASED_POLICY_DIGEST
 from faraday_review.telemetry.qualification import (
     GATE_THRESHOLD_FLOOR,
     QualificationError,
@@ -255,7 +256,8 @@ def test_threshold_floor_cli_exit_2(tmp_path):
     assert main([*base, "--threshold", "25"]) == 0
     assert read_canonical(out)["gate"] == {
         "threshold": 25, "criterion": "adjudicated_qualifying_real_pr_count >= threshold",
-        "criterion_status": "pending_founder_confirmation", "met": False,
+        "criterion_status": "pending_founder_confirmation",
+        "released_policy_digests": [RELEASED_POLICY_DIGEST], "met": False,
         "superseded_criterion": {"criterion": "real_pr_count >= threshold", "met": False,
                                  "authoritative": False}}
 

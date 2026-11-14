@@ -36,7 +36,7 @@ from .fingerprints import evidence_fingerprint, run_fingerprint
 from .github.budget import RequestBudget
 from .github.client import GitHubClient
 from .github.collection import CollectionError, collect, load_enrollment
-from .github.preflight import preflight
+from .github.preflight import RELEASED_POLICY_DIGEST, preflight
 from .github.pr_context import collect_context, fetch_head_sha
 from .github.publisher import publish_check_run, publish_summary_comment
 from .github.secrets import collect_secret_alerts
@@ -555,6 +555,7 @@ def _cmd_readiness(args) -> int:
         return 2
     report = readiness(
         ledger, synthetic, generated_at=args.generated_at, threshold=args.threshold,
+        released_policy_digests=args.released_policy_digest or [RELEASED_POLICY_DIGEST],
         ledger_evidence=file_evidence(ledger_path),
         synthetic_evidence=file_evidence(synthetic_path),
     )
@@ -652,6 +653,9 @@ def main(argv: list[str] | None = None) -> int:
     rdy.add_argument("--output", required=True)
     rdy.add_argument("--threshold", type=int, default=GATE_THRESHOLD_FLOOR,
                      help=f"real-PR gate; hard floor {GATE_THRESHOLD_FLOOR}, lower values are rejected")
+    rdy.add_argument("--released-policy-digest", action="append", default=None,
+                     help="governance-released digest a counted run must use (repeatable); "
+                          "default: the governance v1.1.0 release")
 
     args = parser.parse_args(argv)
     qualification = {"adjudicate": _cmd_adjudicate, "aggregate": _cmd_aggregate,

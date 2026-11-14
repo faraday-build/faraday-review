@@ -933,7 +933,9 @@ def _summary(values: list[float]) -> dict[str, Any]:
             "p90_seconds": _percentile(ordered, 0.9)}
 
 
-def _occurrence_exclusions(occ: dict[str, Any], digest_verified: bool) -> list[str]:
+def _occurrence_exclusions(occ: dict[str, Any], digest_verified: bool,
+                           digest: str | None = None,
+                           released: list[str] | None = None) -> list[str]:
     """Why one completed, fresh, identity-eligible occurrence cannot count
     for the gate; empty means it is eligible. Unknown states (no class, an
     unclassified reason, a blocking reason on a non-Block class, which the
@@ -948,13 +950,19 @@ def _occurrence_exclusions(occ: dict[str, Any], digest_verified: bool) -> list[s
             found.add(category)
     if not digest_verified:
         found.add("policy_digest_unverified")
+    elif released is not None and digest not in released:
+        # Verified only proves decision.json reproduces the fingerprint; a
+        # run under a digest that is not a governance release is misconfigured.
+        found.add("misconfigured")
     return sorted(found)
 
 
 def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, generated_at: str,
               ledger_evidence: dict[str, str], synthetic_evidence: dict[str, str],
-              threshold: int = GATE_THRESHOLD_FLOOR) -> dict[str, Any]:
+              threshold: int = GATE_THRESHOLD_FLOOR,
+              released_policy_digests: list[str] | None = None) -> dict[str, Any]:
     require_timestamp(generated_at, "generated_at")
+    released = sorted(set(released_policy_digests)) if released_policy_digests is not None else None
     if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < GATE_THRESHOLD_FLOOR:
         raise QualificationError(
             f"gate threshold {threshold!r} rejected: hard floor is {GATE_THRESHOLD_FLOOR}")
@@ -1017,18 +1025,26 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         # must sit on the entry (exact head) of an eligible occurrence.
         qualifying = adjudicated_on_eligible = False
         reasons_seen: set[str] = set()
+        # The classification agreement scores: the latest eligible occurrence
+        # on an adjudicated entry, never a later excluded rerun that happens
+        # to represent the collapsed run.
+        scored: tuple | None = None
         for pair_entry, pair_run in pairs:
             for occ in pair_run["occurrence_log"]:
                 if not (occ["eligible"] and occ["final_status"] == "completed"
                         and occ["stale_state"] == "fresh"):
                     continue
-                found = _occurrence_exclusions(occ, pair_run["policy_digest_verified"])
+                found = _occurrence_exclusions(occ, pair_run["policy_digest_verified"],
+                                               pair_run["policy_bundle_digest"], released)
                 if found:
                     reasons_seen.update(found)
                     continue
                 qualifying = True
                 if pair_entry["founder_adjudication"] is not None:
                     adjudicated_on_eligible = True
+                    rank = (_sort_key_ts(occ["created_at"]), occ["event_key"])
+                    if scored is None or rank > scored[0]:
+                        scored = (rank, occ["classifier_class"])
         if adjudicated_on_eligible:
             status = "adjudicated_qualifying"
         elif qualifying:
@@ -1043,6 +1059,7 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
                                   "status": status})
         counted.append({"entry": entry, "run": run, "first_seen": first_seen,
                         "all_runs": [r for _, r in pairs],
+                        "scored_class": scored[1] if scored else run["classifier_class"],
                         "qualification": {"status": status,
                                           "exclusion_reasons": sorted(reasons_seen)}})
 
@@ -1059,7 +1076,7 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         if adj is None:
             continue
         adjudicated += 1
-        cls, founder = run["classifier_class"], adj["founder_classification"]
+        cls, founder = item["scored_class"], adj["founder_classification"]
         if cls not in CLASS_ORDER:
             anomalies.append({"kind": "adjudicated_run_without_class",
                               "repository": entry["repository"], "pr_number": entry["pr_number"]})
@@ -1218,6 +1235,7 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
             "threshold": threshold,
             "criterion": GATE_CRITERION,
             "criterion_status": "pending_founder_confirmation",
+            "released_policy_digests": released,
             "met": adjudicated_qualifying >= threshold,
             "superseded_criterion": {"criterion": SUPERSEDED_GATE_CRITERION,
                                      "met": real_pr_count >= threshold,

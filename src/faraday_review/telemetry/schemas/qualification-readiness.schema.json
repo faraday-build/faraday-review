@@ -244,11 +244,17 @@
     "gate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["threshold", "criterion", "criterion_status", "met", "superseded_criterion"],
+      "required": ["threshold", "criterion", "criterion_status", "released_policy_digests", "met",
+                   "superseded_criterion"],
       "properties": {
         "threshold": { "type": "integer", "minimum": 20 },
         "criterion": { "const": "adjudicated_qualifying_real_pr_count >= threshold" },
         "criterion_status": { "const": "pending_founder_confirmation" },
+        "released_policy_digests": {
+          "description": "Governance-released policy digests a counted run must have been evaluated under; any other verified digest is misconfigured. null = not enforced (library default only; the CLI always enforces).",
+          "type": ["array", "null"],
+          "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        },
         "met": { "type": "boolean" },
         "superseded_criterion": {
           "description": "The v2 criterion, reported so nothing is hidden. Never authoritative.",

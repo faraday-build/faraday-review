@@ -117,6 +117,7 @@ def test_gate_met_at_20_adjudicated_qualifying(tmp_path):
         "threshold": 20,
         "criterion": "adjudicated_qualifying_real_pr_count >= threshold",
         "criterion_status": "pending_founder_confirmation",
+        "released_policy_digests": None,
         "met": True,
         "superseded_criterion": {"criterion": "real_pr_count >= threshold", "met": True,
                                  "authoritative": False},
