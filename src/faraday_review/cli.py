@@ -11,9 +11,11 @@ no decision document could be produced.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -35,6 +37,8 @@ from .github.client import GitHubClient
 from .github.pr_context import collect_context, fetch_head_sha
 from .github.publisher import publish_check_run, publish_summary_comment
 from .github.secrets import collect_secret_alerts
+from .evidence.schema_validation import validation_errors
+from .governance.authorization import failed_run_posture
 from .governance.validator_client import evaluate
 from .models import DeterministicFinding
 from .telemetry.adjudication import append_adjudication, build_adjudication_record
@@ -61,6 +65,20 @@ def _new_event_id() -> str:
     """P2: a fresh UUIDv4 per emission, never derived from content. Module
     level so tests can pin it."""
     return str(uuid.uuid4())
+
+
+_REVIEW_ID_MAX = 64  # review-telemetry-event review_id: 8..64 characters
+
+
+def _review_id(repository: str, pr: int, head_sha: str) -> str:
+    """The review subject id. The readable form is kept whenever it fits the
+    schema; a longer one becomes a bounded digest form that is still unique
+    per (repository, PR, head) (Codex P2, #8)."""
+    readable = f"frr-{repository.replace('/', '-')}-{pr}-{head_sha[:12]}"
+    if len(readable) <= _REVIEW_ID_MAX:
+        return readable
+    subject = hashlib.sha256(f"{repository}#{pr}@{head_sha}".encode("utf-8")).hexdigest()
+    return f"frr-{pr}-{head_sha[:12]}-{subject[:24]}"
 
 
 def _positive_int(value: str) -> int:
@@ -138,55 +156,167 @@ def validator_main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _cmd_shadow_run(args) -> int:
-    started = time.monotonic()
-    config = load_config(Path(args.config)) if args.config else default_config()
+class _ShadowFailure(Exception):
+    """An early end of a shadow run with a known failure mode."""
+
+    def __init__(self, failure_mode: str, message: str) -> None:
+        super().__init__(message)
+        self.failure_mode = failure_mode
+
+
+# failure_mode values the producer emits (the contract fixes only the
+# pattern ^[a-z][a-z0-9_]{0,63}$). A FaradayReviewError contributes its own
+# machine-readable `reason`; anything else is internal_error.
+WORKFLOW_FAILURE_MODES = ("workflow_step_cancelled", "workflow_step_failed")
+_FAILURE_MODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+class _ShadowRun:
+    """What one shadow run has established so far, so that every early end
+    can still emit exactly one failed telemetry record (GHO-004 P1)."""
+
+    def __init__(self, args) -> None:
+        self.args = args
+        self.started = time.monotonic()
+        self.artifacts = Path(args.artifacts_dir)
+        self.budget: RequestBudget | None = None
+        self.context = None
+        self.decision: dict | None = None
+        self.stale_state: str | None = None
+        self.findings: list = []
+        self.emitted = False
+
+    def finding_counts(self) -> dict[str, int]:
+        counts = {"info": 0, "warning": 0, "blocking": 0}
+        for finding in self.findings:
+            counts[finding.severity] = counts.get(finding.severity, 0) + 1
+        return counts
+
+    def emit(self, *, final_status: str, failure_mode: str | None = None) -> bool:
+        """Append the run's single telemetry record. For a failed run the
+        identity comes from the decision, else the collected context, else
+        the event-payload SHAs (--head-sha/--base-sha); with none of them no
+        schema-valid record exists and nothing is written."""
+        if self.emitted:
+            return False
+        args = self.args
+        decision = self.decision
+        if decision is None:
+            if self.context is not None:
+                head, base = self.context.head_sha, self.context.base_sha
+            else:
+                head, base = args.head_sha, args.base_sha
+            if not (isinstance(head, str) and _SHA_RE.match(head)
+                    and isinstance(base, str) and _SHA_RE.match(base)):
+                print("shadow-run: no failure telemetry: head/base SHA unknown "
+                      "(pass --head-sha/--base-sha)", file=sys.stderr)
+                return False
+            decision = {**failed_run_posture(), "repository": args.repository,
+                        "pr_number": args.pr, "base_sha": base, "head_sha": head,
+                        "reviewer_version": REVIEWER_VERSION}
+        budget = self.budget
+        event = build_run_event(
+            review_id=_review_id(args.repository, args.pr, decision["head_sha"]),
+            fingerprint=run_fingerprint(
+                args.repository, args.pr, decision["base_sha"], decision["head_sha"],
+                decision.get("policy_digest"), REVIEWER_VERSION,
+            ),
+            decision=decision,
+            finding_counts=self.finding_counts(),
+            stale_state=self.stale_state,
+            duration_seconds=round(time.monotonic() - self.started, 3),
+            github_requests_used=budget.requests_used if budget else 0,
+            retries=budget.retries_used if budget else 0,
+            final_status=final_status,
+            failure_mode=failure_mode,
+            created_at=_now_iso(),
+            event_id=_new_event_id(),
+            execution=_execution_from_args(args),
+        )
+        if final_status == "failed":
+            errors = validation_errors("review-telemetry-event", event)
+            if errors:
+                print(f"shadow-run: no failure telemetry: record fails schema: {errors[:3]}",
+                      file=sys.stderr)
+                return False
+        append_event(event, root=self.artifacts)
+        self.emitted = True
+        return True
+
+
+def _shadow_run(args) -> int:
+    """Run one shadow review; on any early end emit one failed record and
+    exit 2 (the exit contract is unchanged)."""
+    run = _ShadowRun(args)
+    try:
+        return _cmd_shadow_run(args, run)
+    except _ShadowFailure as exc:
+        mode = exc.failure_mode
+        print(f"shadow-run: {exc}", file=sys.stderr)
+    except FaradayReviewError as exc:
+        mode = exc.reason if _FAILURE_MODE_RE.match(exc.reason or "") else "internal_error"
+        print(f"shadow-run: {exc.reason}: {exc}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - fail closed, never a traceback-only death
+        mode = "internal_error"
+        print(f"shadow-run: internal_error: {type(exc).__name__}: {exc}", file=sys.stderr)
+    try:
+        run.artifacts.mkdir(parents=True, exist_ok=True)
+        run.emit(final_status="failed", failure_mode=mode)
+    except Exception as exc:  # noqa: BLE001 - telemetry must not mask the failure
+        print(f"shadow-run: no failure telemetry: {type(exc).__name__}: {exc}", file=sys.stderr)
+    return 2
+
+
+def _cmd_shadow_run(args, run: _ShadowRun) -> int:
+    artifacts = run.artifacts
+    artifacts.mkdir(parents=True, exist_ok=True)
     token = os.environ.get(args.token_env, "")
     if not token:
-        print(f"shadow-run: no token in ${args.token_env}", file=sys.stderr)
-        return 2
+        raise _ShadowFailure("github_token_missing", f"no token in ${args.token_env}")
+    config = load_config(Path(args.config)) if args.config else default_config()
 
-    artifacts = Path(args.artifacts_dir)
-    artifacts.mkdir(parents=True, exist_ok=True)
     budget = RequestBudget(config.github_api)
+    run.budget = budget
     client = GitHubClient(token, config.github_api, budget)
 
     infrastructure_failure = None
-    stale_state = "fresh"
-    findings = []
-    try:
-        context = collect_context(
-            client, args.repository, args.pr, sorted(args.required_check or [])
-        )
-        findings.extend(evaluate_limits(context, config.pr_limits))
-        if args.repo_dir:
-            report = artifacts / "gitleaks-report.json"
+    findings = run.findings
+    # Budget death during collection (Correction 2) is an infrastructure
+    # fault: BudgetExceededError propagates to _shadow_run, which records
+    # failure_mode github_api_budget_exceeded and exits 2. It is never
+    # normalized into pr_too_large.
+    context = collect_context(
+        client, args.repository, args.pr, sorted(args.required_check or [])
+    )
+    run.context = context
+    findings.extend(evaluate_limits(context, config.pr_limits))
+    if args.repo_dir:
+        report = artifacts / "gitleaks-report.json"
+        try:
             code = run_gitleaks(Path(args.repo_dir), context.base_sha, context.head_sha, report)
-            if code not in (0, 2):
-                print(f"shadow-run: gitleaks exited {code}; failing closed", file=sys.stderr)
-                return 2
-            findings.extend(parse_gitleaks_report(report))
-        findings.extend(collect_secret_alerts(client, args.repository))
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise _ShadowFailure("gitleaks_error",
+                                 f"gitleaks not runnable ({type(exc).__name__}); failing closed") from exc
+        if code not in (0, 2):
+            raise _ShadowFailure("gitleaks_error", f"gitleaks exited {code}; failing closed")
+        findings.extend(parse_gitleaks_report(report))
+    findings.extend(collect_secret_alerts(client, args.repository))
 
-        # Freshness gate 1: head must still match before evidence is final.
-        refetched = fetch_head_sha(client, args.repository, args.pr)
-        if not is_fresh(context.head_sha, refetched):
-            stale_state = "stale_before_validation"
-            findings.append(
-                DeterministicFinding(
-                    rule_id="head-moved",
-                    check="freshness",
-                    severity="blocking",
-                    message=f"head moved from {context.head_sha} to {refetched} before validation",
-                )
+    # Freshness gate 1: head must still match before evidence is final.
+    refetched = fetch_head_sha(client, args.repository, args.pr)
+    # Freshness is known only once the comparison ran (Codex P2, #8).
+    run.stale_state = "fresh"
+    if not is_fresh(context.head_sha, refetched):
+        run.stale_state = "stale_before_validation"
+        findings.append(
+            DeterministicFinding(
+                rule_id="head-moved",
+                check="freshness",
+                severity="blocking",
+                message=f"head moved from {context.head_sha} to {refetched} before validation",
             )
-        evidence = build_evidence(context, findings)
-    except BudgetExceededError as exc:
-        # Budget death during collection: no evidence exists to evaluate.
-        # This is an infrastructure fault (Correction 2) — fail the run
-        # loudly so it pages; it must never be normalized into pr_too_large.
-        print(f"shadow-run: github_api_budget_exceeded: {exc}", file=sys.stderr)
-        return 2
+        )
+    evidence = build_evidence(context, findings)
     context_path = artifacts / "pr-context.json"
     evidence_path = artifacts / "review-evidence.json"
     write_context(context_path, context)
@@ -201,48 +331,75 @@ def _cmd_shadow_run(args) -> int:
         digest_source=source,
         infrastructure_failure=infrastructure_failure,
     )
-    _write_outputs_shadow(result, artifacts)
     decision = result.decision
+    # Captured before anything is written, so a failure while writing the
+    # outputs still copies the Validator's decision (Codex P2, #8).
+    run.decision = decision
+    _write_outputs_shadow(result, artifacts)
 
     # Freshness gate 2: before publication.
     try:
         refetched = fetch_head_sha(client, args.repository, args.pr)
         if not is_fresh(decision["head_sha"], refetched):
-            stale_state = "stale_before_publication"
+            run.stale_state = "stale_before_publication"
     except (BudgetExceededError, FaradayReviewError):
-        stale_state = "stale_before_publication"
+        run.stale_state = "stale_before_publication"
 
     if not args.skip_publish:
         publish_check_run(client, args.repository, decision)
         publish_summary_comment(client, args.repository, args.pr, decision)
 
-    counts = {"info": 0, "warning": 0, "blocking": 0}
-    for finding in findings:
-        counts[finding.severity] = counts.get(finding.severity, 0) + 1
-    fingerprint = run_fingerprint(
-        args.repository, args.pr, decision["base_sha"], decision["head_sha"],
-        decision["policy_digest"], REVIEWER_VERSION,
-    )
-    event = build_run_event(
-        review_id=f"frr-{args.repository.replace('/', '-')}-{args.pr}-{decision['head_sha'][:12]}",
-        fingerprint=fingerprint,
-        decision=decision,
-        finding_counts=counts,
-        stale_state=stale_state,
-        duration_seconds=round(time.monotonic() - started, 3),
-        github_requests_used=budget.requests_used,
-        retries=budget.retries_used,
-        final_status="completed",
-        created_at=_now_iso(),
-        event_id=_new_event_id(),
-        execution=_execution_from_args(args),
-    )
-    append_event(event, root=artifacts)
+    run.emit(final_status="completed")
     print(
-        f"shadow-run: risk_class={decision['risk_class']} stale_state={stale_state} "
+        f"shadow-run: risk_class={decision['risk_class']} stale_state={run.stale_state} "
         f"requests={budget.requests_used} evidence_fingerprint={evidence_fingerprint(evidence.to_json())[:19]}…",
         file=sys.stderr,
     )
+    return 0
+
+
+def _own_decision(path: Path, args) -> dict | None:
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        decision = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(decision, dict):
+        return None
+    if decision.get("repository") != args.repository or decision.get("pr_number") != args.pr:
+        return None
+    if not all(isinstance(decision.get(k), str) and _SHA_RE.match(decision[k])
+               for k in ("head_sha", "base_sha")):
+        return None
+    return decision
+
+
+def _cmd_record_failure(args) -> int:
+    """Workflow-level failure record (GHO-004 P1): the review step ended
+    without writing telemetry (killed, timed out, cancelled, or crashed
+    before the CLI could record). No network. A no-op when the artifacts dir
+    already holds telemetry, so an execution never gets two records (P1)."""
+    if not _REPOSITORY_RE.match(args.repository) or args.pr < 1 \
+            or not _SHA_RE.match(args.head_sha) or not _SHA_RE.match(args.base_sha):
+        print("record-failure: invalid --repository, --pr, --head-sha or --base-sha",
+              file=sys.stderr)
+        return 2
+    artifacts = Path(args.artifacts_dir)
+    telemetry = artifacts / "telemetry.jsonl"
+    if telemetry.exists() and telemetry.read_text(encoding="utf-8").strip():
+        print("record-failure: telemetry already recorded; nothing to do", file=sys.stderr)
+        return 0
+    artifacts.mkdir(parents=True, exist_ok=True)
+    run = _ShadowRun(args)
+    # The step may have died after the Validator wrote decision.json (e.g.
+    # during publication): copy that decision verbatim, as shadow-run would
+    # have (Codex P2, #8). A foreign or unreadable one is ignored and the
+    # fail-closed posture is used.
+    run.decision = _own_decision(artifacts / "decision.json", args)
+    if not run.emit(final_status="failed", failure_mode=args.failure_mode):
+        return 2
+    print(f"record-failure: failure_mode={args.failure_mode} -> {telemetry}", file=sys.stderr)
     return 0
 
 
@@ -354,6 +511,22 @@ def main(argv: list[str] | None = None) -> int:
                         help="GitHub Actions run id (github.run_id); requires --run-attempt")
     shadow.add_argument("--run-attempt", type=_positive_int, default=None,
                         help="GitHub Actions run attempt (github.run_attempt); requires --run-id")
+    shadow.add_argument("--head-sha", default=None,
+                        help="event-payload head SHA; identity for a failure record only, "
+                             "never used for review")
+    shadow.add_argument("--base-sha", default=None,
+                        help="event-payload base SHA; identity for a failure record only")
+
+    rec = sub.add_parser("record-failure",
+                         help="record one failed run when the review step left no telemetry (no network)")
+    rec.add_argument("--repository", required=True)
+    rec.add_argument("--pr", type=int, required=True)
+    rec.add_argument("--head-sha", required=True)
+    rec.add_argument("--base-sha", required=True)
+    rec.add_argument("--run-id", type=_positive_int, required=True)
+    rec.add_argument("--run-attempt", type=_positive_int, required=True)
+    rec.add_argument("--failure-mode", required=True, choices=WORKFLOW_FAILURE_MODES)
+    rec.add_argument("--artifacts-dir", default="artifacts/reviews")
 
     tput = sub.add_parser("throughput", help="metrics from the telemetry log")
     tput.add_argument("--artifacts-dir", default="artifacts/reviews")
@@ -397,11 +570,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "shadow-run" and (args.run_id is None) != (args.run_attempt is None):
         parser.error("shadow-run: --run-id and --run-attempt must be given together")
     if args.command == "shadow-run":
-        try:
-            return _cmd_shadow_run(args)
-        except FaradayReviewError as exc:
-            print(f"shadow-run: {exc.reason}: {exc}", file=sys.stderr)
-            return 2
+        return _shadow_run(args)
+    if args.command == "record-failure":
+        return _cmd_record_failure(args)
     if args.command == "throughput":
         metrics = compute_throughput(list(read_events(Path(args.artifacts_dir))))
         write_canonical(Path(args.artifacts_dir) / "throughput.json", metrics)
