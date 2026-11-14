@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/local/qualification-collection-manifest.schema.json",
+  "title": "QualificationCollectionManifest",
+  "description": "collection-manifest-<stamp>.json at an archive root: what one `faraday-review collect` invocation saw (runs, attempts, artifacts, expiry) and archived (files with sha256). Immutable once written. Paths are relative to the archive root.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "collected_at", "repositories"],
+  "properties": {
+    "format": { "const": "faraday-review/qualification-collection/v1" },
+    "collected_at": { "type": "string", "format": "date-time" },
+    "repositories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "visibility", "workflow", "runs"],
+        "properties": {
+          "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+          "visibility": { "enum": ["public", "private"] },
+          "workflow": { "type": "string", "minLength": 1 },
+          "runs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["run_id", "run_attempt", "status", "conclusion", "created_at", "artifacts"],
+              "properties": {
+                "run_id": { "type": "integer", "minimum": 1 },
+                "run_attempt": { "type": "integer", "minimum": 1 },
+                "status": { "type": "string", "minLength": 1 },
+                "conclusion": { "type": ["string", "null"] },
+                "created_at": { "type": "string", "format": "date-time" },
+                "artifacts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["artifact_id", "name", "pr_number", "head_sha", "attempt", "size_in_bytes", "digest", "expired", "expires_at", "archived", "files"],
+                    "properties": {
+                      "artifact_id": { "type": "integer", "minimum": 1 },
+                      "name": { "type": "string", "pattern": "^faraday-review-pr[1-9][0-9]*-[0-9a-f]{40}-a[1-9][0-9]*$" },
+                      "pr_number": { "type": "integer", "minimum": 1 },
+                      "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+                      "attempt": { "type": "integer", "minimum": 1 },
+                      "size_in_bytes": { "type": "integer", "minimum": 0 },
+                      "digest": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$" },
+                      "expired": { "type": "boolean" },
+                      "expires_at": { "type": ["string", "null"] },
+                      "archived": { "type": "boolean" },
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["name", "path", "sha256", "size"],
+                          "properties": {
+                            "name": { "enum": ["telemetry.jsonl", "decision.json", "adjudications.jsonl", "run-binding.json"] },
+                            "path": { "type": "string", "minLength": 1 },
+                            "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                            "size": { "type": "integer", "minimum": 0 }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

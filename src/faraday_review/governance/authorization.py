@@ -171,3 +171,16 @@ def assemble_founder_escalation(decision: dict[str, Any]) -> dict[str, Any] | No
         "evidence_fingerprint": decision["evidence_fingerprint"],
         "escalated_at": decision["evaluated_at"],
     }
+
+
+def failed_run_posture() -> dict[str, Any]:
+    """Authorization posture for a shadow run that ended before the
+    Validator produced a decision (GHO-004 P1). Telemetry consumers copy it
+    verbatim, exactly as they copy a decision: nothing is authorized and
+    founder review is required. A fresh dict per call."""
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "approval_authorized": False,
+        "merge_authorized": False,
+        "founder_review_required": True,
+    }

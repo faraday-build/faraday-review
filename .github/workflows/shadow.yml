@@ -133,6 +133,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install reviewer and gitleaks
+        id: install
         run: |
           set -euo pipefail
           python -m pip install --quiet ./.faraday-review
@@ -145,6 +146,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Shadow review
+        id: shadow
         env:
           GITHUB_TOKEN: ${{ github.token }}
           FARADAY_POLICY_DIGEST: ${{ inputs.policy_digest }}
@@ -152,6 +154,10 @@ jobs:
           CALLER_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          # Payload SHAs identify a failure record only; the review itself
+          # always uses the head/base it collects from the API.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           # Execution identity (agent-contracts v0.4.0): the platform's own
           # run id and attempt, never a caller input.
           RUN_ID: ${{ github.run_id }}
@@ -163,7 +169,8 @@ jobs:
           args=(--repository "$CALLER_REPO" --pr "$PR_NUMBER"
                 --policy-bundle .faraday-governance/review-policy
                 --repo-dir target --artifacts-dir "$artifacts"
-                --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT")
+                --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"
+                --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA")
           while IFS= read -r check; do
             check="${check#"${check%%[![:space:]]*}"}"; check="${check%"${check##*[![:space:]]}"}"
             [ -n "$check" ] && args+=(--required-check "$check")
@@ -175,6 +182,35 @@ jobs:
           fi
           # Empty FARADAY_POLICY_DIGEST is treated as absent => Block.
           faraday-review shadow-run "${args[@]}"
+
+      - name: Record failure telemetry
+        # The review step writes its own failed record on every handled
+        # exit. This covers a step that died before it could (killed, timed
+        # out, cancelled): one failed v0.4.0 event via the reviewer CLI, a
+        # no-op when telemetry already exists. Earlier failures (binding,
+        # checkout, install) leave no reviewer to run; collection reports
+        # those runs as run_without_telemetry.
+        if: always() && steps.install.outcome == 'success'
+        env:
+          SHADOW_OUTCOME: ${{ steps.shadow.outcome }}
+          CALLER_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          artifacts="$RUNNER_TEMP/faraday-artifacts"
+          case "$SHADOW_OUTCOME" in
+            success) exit 0 ;;
+            cancelled) mode=workflow_step_cancelled ;;
+            *) mode=workflow_step_failed ;;
+          esac
+          faraday-review record-failure --repository "$CALLER_REPO" --pr "$PR_NUMBER" \
+            --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA" \
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
+            --failure-mode "$mode" --artifacts-dir "$artifacts"
 
       - name: Record run binding
         if: always()
