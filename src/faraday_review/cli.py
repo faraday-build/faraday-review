@@ -24,7 +24,7 @@ from pathlib import Path
 
 from . import REVIEWER_VERSION
 from .canonical import write_canonical
-from .config import default_config, load_config
+from .config import GitHubApiConfig, default_config, load_config
 from .deterministic.pr_limits import evaluate_limits
 from .deterministic.secret_scan import parse_gitleaks_report, run_gitleaks
 from .errors import BudgetExceededError, FaradayReviewError
@@ -34,6 +34,8 @@ from .evidence.serialization import write_context, write_evidence
 from .fingerprints import evidence_fingerprint, run_fingerprint
 from .github.budget import RequestBudget
 from .github.client import GitHubClient
+from .github.collection import CollectionError, collect, load_enrollment
+from .github.preflight import preflight
 from .github.pr_context import collect_context, fetch_head_sha
 from .github.publisher import publish_check_run, publish_summary_comment
 from .github.secrets import collect_secret_alerts
@@ -452,6 +454,61 @@ def _cmd_adjudicate(args) -> int:
     return 0
 
 
+def _new_session():
+    """HTTP session factory (tests substitute an in-memory GitHub)."""
+    import requests
+    return requests.Session()
+
+
+def _read_only_client(args, command: str) -> GitHubClient | None:
+    token = os.environ.get(args.token_env, "")
+    if not token:
+        print(f"{command}: no token in ${args.token_env}", file=sys.stderr)
+        return None
+    base = default_config().github_api
+    config = GitHubApiConfig(**{**base.__dict__, "max_requests_per_run": args.max_requests})
+    return GitHubClient(token, config, RequestBudget(config), session=_new_session())
+
+
+def _cmd_collect(args) -> int:
+    """Archive shadow-run artifacts of enrolled repositories (read-only API)."""
+    client = _read_only_client(args, "collect")
+    if client is None:
+        return 2
+    try:
+        enrollment = load_enrollment(Path(args.enrollment))
+        summary = collect(client, enrollment, public_archive=Path(args.archive_dir),
+                          private_archive=Path(args.private_archive_dir)
+                          if args.private_archive_dir else None,
+                          collected_at=args.collected_at)
+    except (FaradayReviewError, QualificationError) as exc:
+        print(f"collect: {getattr(exc, 'reason', 'invalid_input')}: {exc}", file=sys.stderr)
+        return 2
+    print(f"collect: repositories={summary['repositories']} runs={summary['runs']} "
+          f"files_written={summary['files_written']} requests={client.budget.requests_used}",
+          file=sys.stderr)
+    return 0
+
+
+def _cmd_preflight(args) -> int:
+    """Read-only activation checks; exit 1 listing every gap."""
+    if not _REPOSITORY_RE.match(args.repo):
+        print("preflight: invalid --repo", file=sys.stderr)
+        return 2
+    client = _read_only_client(args, "preflight")
+    if client is None:
+        return 2
+    try:
+        report = preflight(client, args.repo, workflow=args.workflow)
+    except FaradayReviewError as exc:
+        print(f"preflight: {exc.reason}: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(report, indent=2, sort_keys=True))
+    for gap in report["gaps"]:
+        print(f"preflight: GAP: {gap}", file=sys.stderr)
+    return 0 if report["ready"] else 1
+
+
 def _cmd_aggregate(args) -> int:
     prior = None
     if args.prior_ledger:
@@ -541,6 +598,22 @@ def main(argv: list[str] | None = None) -> int:
     adj.add_argument("--founder-node-id", default=DEFAULT_FOUNDER_NODE_ID)
     adj.add_argument("--artifacts-dir", default="artifacts/reviews")
 
+    col = sub.add_parser("collect", help="archive shadow-run artifacts of enrolled repos (read-only API)")
+    col.add_argument("--enrollment", default="docs/qualification/enrollment.json")
+    col.add_argument("--archive-dir", default="docs/qualification/artifacts",
+                     help="public archive root (in this public repository)")
+    col.add_argument("--private-archive-dir", default=None,
+                     help="archive root OUTSIDE this repository for private repos (founder decision P8)")
+    col.add_argument("--collected-at", required=True, help="explicit ISO-8601 timestamp; no clock is read")
+    col.add_argument("--token-env", default="GITHUB_TOKEN")
+    col.add_argument("--max-requests", type=_positive_int, default=5000)
+
+    pre = sub.add_parser("preflight", help="read-only activation checks for one caller repo")
+    pre.add_argument("--repo", required=True)
+    pre.add_argument("--workflow", default=".github/workflows/faraday-review.yml")
+    pre.add_argument("--token-env", default="GITHUB_TOKEN")
+    pre.add_argument("--max-requests", type=_positive_int, default=100)
+
     agg = sub.add_parser("aggregate", help="fold downloaded run artifacts into one ledger")
     agg.add_argument("--input-dir", required=True)
     agg.add_argument("--output", required=True)
@@ -572,6 +645,10 @@ def main(argv: list[str] | None = None) -> int:
         return _shadow_run(args)
     if args.command == "record-failure":
         return _cmd_record_failure(args)
+    if args.command == "collect":
+        return _cmd_collect(args)
+    if args.command == "preflight":
+        return _cmd_preflight(args)
     if args.command == "throughput":
         metrics = compute_throughput(list(read_events(Path(args.artifacts_dir))))
         write_canonical(Path(args.artifacts_dir) / "throughput.json", metrics)

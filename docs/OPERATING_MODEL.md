@@ -44,9 +44,22 @@ cross-PR record. The durable path is:
 2. **Run artifacts are retained 90 days.** They are raw inputs. The
    ledger is a summary, not a re-ingestible sample store, so the raw
    inputs must outlive the artifacts.
-3. Within the 90-day window the operator downloads each artifact and
-   **archives its files by PR under `docs/qualification/artifacts/<artifact
-   name>/`** (small JSONL/JSON files; never deleted, like the ledger).
+3. Within the 90-day window the operator runs **`faraday-review collect
+   --collected-at <now>`** (read-only API; token from `$GITHUB_TOKEN`; the
+   token needs `actions: read` on the callers). For each repository in
+   `docs/qualification/enrollment.json` it lists the caller workflow's runs
+   and their artifacts, downloads each unexpired
+   `faraday-review-pr<N>-<head>-a<attempt>` artifact, and verifies its
+   digest (or size). It extracts **only** `telemetry.jsonl`, `decision.json`,
+   `adjudications.jsonl` and `run-binding.json` to
+   `docs/qualification/artifacts/<owner>/<repo>/<run id>/<artifact name>/`.
+   `pr-context.json`, `gitleaks-report.json` and the review evidence never
+   leave the zip. An existing file is never overwritten with different
+   bytes: collect fails closed and writes nothing. Each invocation writes
+   one immutable `collection-manifest-<stamp>.json` at the archive root. It
+   records, per run, the id, attempt, status and conclusion, and per
+   artifact the id, digest, expiry and archived files with sha256. The files
+   are small JSONL/JSON and are never deleted, like the ledger.
 4. The operator runs `faraday-review aggregate --input-dir
    docs/qualification/artifacts --prior-ledger <last committed ledger>`
    then `faraday-review readiness` (commands in `PHASE_2_INPUTS.md`). Every
@@ -58,9 +71,49 @@ cross-PR record. The durable path is:
    `docs/qualification/`, signed, through the required checks.
    The ledger and readiness report record the sha256 of every input file,
    so a committed report is auditable against the archived artifacts.
+   Aggregate reads the manifests as inputs (kind `collection_manifest`,
+   held by `--prior-ledger` continuity) and reports evidence that is
+   expected but absent:
+   - `run_without_telemetry`: a completed, non-skipped run attempt with no
+     archived telemetry (failed, cancelled, timed out, or no artifact);
+   - `artifact_expired_unarchived`: the attempt's artifact expired before
+     it was archived;
+   - `enrolled_repo_without_runs`;
+   - `collection_file_missing`: a manifest names a file the archive no
+     longer holds;
+   - `invalid_collection_manifest`.
+
+   CI job `qualification-reproducible` re-runs aggregate (and readiness,
+   when committed) over the committed archive and byte-compares them with
+   the committed `ledger.json` / `readiness.json`. It uses the base
+   branch's ledger as `--prior-ledger`, and passes vacuously while no
+   ledger is committed. It is not a required check. Making it one is a
+   separate ruleset decision.
 5. Archived artifacts, committed ledgers and readiness reports are
    **never deleted during rollback** (see `ROLLBACK.md`); rollback removes observation, not the
    calibration record.
+
+### Private caller repositories (founder decision P8)
+
+This repository is public. A private caller's archive would publish its
+repository name, PR numbers, SHAs, risk classes and blocking reasons, so
+`collect` never writes private metadata here:
+
+- A repository counts as public only if `enrollment.json` declares it
+  public **and** the live API reports `visibility: public`. Anything else,
+  including a mismatch, is private.
+- If an enrolled repository is private, collect refuses before any run or
+  artifact request, unless `--private-archive-dir` names a directory
+  **outside** this repository. Private files and their manifest then go
+  only there. The public archive and manifest never mention the private
+  repository.
+- The committed `enrollment.json` lists public repositories only, and a
+  test enforces that. Private entries belong in an enrollment file kept
+  outside this repository (`--enrollment <path>`).
+- Where the private archive lives (for example a private
+  `faraday-build/faraday-review-qualification` repository, with only counts
+  and hashes published here) is **a founder decision and is not created
+  by this code**. Until it is made, enroll public repositories only.
 
 Adjudications are matched on the founder `node_id` (`U_kgDODk3msA`),
 never login, at both `adjudicate` and `aggregate` time; rejected label

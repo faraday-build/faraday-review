@@ -63,6 +63,37 @@ jobs:
       - name: Unit, integration, and adversarial tests
         run: python -m pytest tests/unit tests/integration tests/adversarial -q
 
+  qualification-reproducible:
+    # GHO-004 P2: a committed ledger/readiness must re-derive byte-for-byte
+    # from the committed archive (vacuous pass while none is committed). On
+    # pull requests the base branch's ledger is the prior ledger, so an
+    # archived input can never silently disappear. Read-only; no repository secrets are used.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: python -m pip install --quiet -e .
+      - name: Reproduce committed qualification outputs
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          prior=()
+          if [ -n "$BASE_REF" ] && git cat-file -e "origin/$BASE_REF:docs/qualification/ledger.json" 2>/dev/null; then
+            git show "origin/$BASE_REF:docs/qualification/ledger.json" > "$RUNNER_TEMP/base-ledger.json"
+            prior=(--prior-ledger "$RUNNER_TEMP/base-ledger.json")
+          fi
+          python tools/qualification/reproduce.py --qualification-dir docs/qualification "${prior[@]}"
+
   determinism-seed:
     runs-on: ubuntu-latest
     timeout-minutes: 15
