@@ -152,13 +152,18 @@ jobs:
           CALLER_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          # Execution identity (agent-contracts v0.4.0): the platform's own
+          # run id and attempt, never a caller input.
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           artifacts="$RUNNER_TEMP/faraday-artifacts"
           mkdir -p "$artifacts"
           args=(--repository "$CALLER_REPO" --pr "$PR_NUMBER"
                 --policy-bundle .faraday-governance/review-policy
-                --repo-dir target --artifacts-dir "$artifacts")
+                --repo-dir target --artifacts-dir "$artifacts"
+                --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT")
           while IFS= read -r check; do
             check="${check#"${check%%[![:space:]]*}"}"; check="${check%"${check##*[![:space:]]}"}"
             [ -n "$check" ] && args+=(--required-check "$check")

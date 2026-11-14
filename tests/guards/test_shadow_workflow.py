@@ -120,6 +120,23 @@ def test_digest_only_from_input():
     assert "--expected-policy-digest" not in _steps()[_index("Shadow review")]["run"]
 
 
+def test_execution_identity_only_from_the_platform():
+    """T28: run id and attempt reach the reviewer from github.run_id and
+    github.run_attempt only. No input, event payload or caller-set value can
+    supply them, and the review step passes both flags together."""
+    step = _steps()[_index("Shadow review")]
+    assert step["env"]["RUN_ID"] == "${{ github.run_id }}"
+    assert step["env"]["RUN_ATTEMPT"] == "${{ github.run_attempt }}"
+    assert '--run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"' in step["run"]
+    assert step["run"].count("--run-id") == 1 and step["run"].count("--run-attempt") == 1
+    inputs = _triggers(_doc())["workflow_call"]["inputs"]
+    assert not any("run" in name and ("id" in name or "attempt" in name) for name in inputs)
+    # The binding record uses the same platform values.
+    binding = _steps()[_index("Record run binding")]["env"]
+    assert binding["RUN_ID"] == step["env"]["RUN_ID"]
+    assert binding["RUN_ATTEMPT"] == step["env"]["RUN_ATTEMPT"]
+
+
 def test_fork_prs_skip_publication():
     run = _steps()[_index("Shadow review")]["run"]
     assert '"$HEAD_REPO" != "$CALLER_REPO"' in run

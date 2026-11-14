@@ -3,6 +3,11 @@
 Authorization-bearing fields are copied verbatim from the Validator's
 decision document via the passthrough list below; telemetry never derives
 or overrides them (authorization-boundary guard).
+
+Identity (agent-contracts v0.4.0, review-telemetry-identity.md P1-P4): the
+caller passes a fresh `event_id` per emission and, when the platform
+execution is known, `execution`. `execution` is never emitted without
+`event_id` (P3).
 """
 
 from __future__ import annotations
@@ -38,7 +43,11 @@ def build_run_event(
     final_status: str,
     created_at: str,
     failure_mode: str | None = None,
+    event_id: str | None = None,
+    execution: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if execution is not None and event_id is None:
+        raise ValueError("execution requires event_id (review-telemetry-identity P3)")
     event: dict[str, Any] = {}
     for key in _DECISION_PASSTHROUGH:
         if decision.get(key) is not None:
@@ -63,4 +72,8 @@ def build_run_event(
     )
     if failure_mode is not None:
         event["failure_mode"] = failure_mode
+    if event_id is not None:
+        event["event_id"] = event_id
+    if execution is not None:
+        event["execution"] = dict(execution)
     return event

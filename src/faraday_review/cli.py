@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,6 +55,31 @@ from .telemetry.writer import append_event, read_events
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _new_event_id() -> str:
+    """P2: a fresh UUIDv4 per emission, never derived from content. Module
+    level so tests can pin it."""
+    return str(uuid.uuid4())
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value, 10)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {value!r}") from None
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1: {value!r}")
+    return parsed
+
+
+def _execution_from_args(args) -> dict[str, int | str] | None:
+    """`execution` for a GitHub Actions run, or None for a local run. The
+    flags are given together or not at all (checked in main)."""
+    if args.run_id is None:
+        return None
+    return {"provider": "github_actions", "run_id": args.run_id,
+            "run_attempt": args.run_attempt}
 
 
 def _digest_source(cli_value: str | None) -> tuple[str | None, str]:
@@ -208,6 +234,8 @@ def _cmd_shadow_run(args) -> int:
         retries=budget.retries_used,
         final_status="completed",
         created_at=_now_iso(),
+        event_id=_new_event_id(),
+        execution=_execution_from_args(args),
     )
     append_event(event, root=artifacts)
     print(
@@ -322,6 +350,10 @@ def main(argv: list[str] | None = None) -> int:
     shadow.add_argument("--config", default=None)
     shadow.add_argument("--skip-publish", action="store_true")
     shadow.add_argument("--allow-partial", action="store_true")
+    shadow.add_argument("--run-id", type=_positive_int, default=None,
+                        help="GitHub Actions run id (github.run_id); requires --run-attempt")
+    shadow.add_argument("--run-attempt", type=_positive_int, default=None,
+                        help="GitHub Actions run attempt (github.run_attempt); requires --run-id")
 
     tput = sub.add_parser("throughput", help="metrics from the telemetry log")
     tput.add_argument("--artifacts-dir", default="artifacts/reviews")
@@ -362,6 +394,8 @@ def main(argv: list[str] | None = None) -> int:
         except QualificationError as exc:
             print(f"{args.command}: {exc}", file=sys.stderr)
             return 2
+    if args.command == "shadow-run" and (args.run_id is None) != (args.run_attempt is None):
+        parser.error("shadow-run: --run-id and --run-attempt must be given together")
     if args.command == "shadow-run":
         try:
             return _cmd_shadow_run(args)
