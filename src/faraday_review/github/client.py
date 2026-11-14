@@ -107,7 +107,14 @@ class GitHubClient:
                      params: dict[str, Any] | None = None) -> list[Any]:
         """Like `paginate` for endpoints that wrap the list in an object
         (`{"total_count": n, key: [...]}`)."""
+        return self.paginate_key_counted(path, key, params)[0]
+
+    def paginate_key_counted(self, path: str, key: str,
+                             params: dict[str, Any] | None = None) -> tuple[list[Any], int | None]:
+        """`paginate_key` plus the first page's `total_count` (None when the
+        endpoint omits it), so a caller can detect a truncated listing."""
         items: list[Any] = []
+        total: int | None = None
         params = dict(params or {})
         params.setdefault("per_page", 100)
         url: str | None = path
@@ -116,9 +123,11 @@ class GitHubClient:
             page = response.json()
             if not isinstance(page, dict) or not isinstance(page.get(key), list):
                 raise GitHubApiError(f"expected an object with list {key!r} at {url}")
+            if total is None and isinstance(page.get("total_count"), int):
+                total = page["total_count"]
             items.extend(page[key])
             url = response.links.get("next", {}).get("url")
-        return items
+        return items, total
 
     def paginate(self, path: str, params: dict[str, Any] | None = None) -> list[Any]:
         """Follow RFC 5988 Link headers; every page spends budget."""

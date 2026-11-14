@@ -22,7 +22,12 @@ How the number is computed (no network, deterministic, explicit timestamp):
 ```bash
 # 1. archive every enrolled repo's shadow-run artifacts (read-only API)
 faraday-review collect --collected-at 2026-11-12T00:00:00Z
-# 2. fold the whole archive into one ledger
+# 2a. FIRST ledger only (no docs/qualification/ledger.json committed yet):
+#     fold the whole archive into one ledger, without --prior-ledger
+faraday-review aggregate --input-dir docs/qualification/artifacts \
+  --output docs/qualification/ledger.json --generated-at 2026-11-12T00:00:00Z
+# 2b. every LATER update: the last committed ledger is the prior ledger, so
+#     an input it recorded can never silently disappear (fails closed, exit 2)
 faraday-review aggregate --input-dir docs/qualification/artifacts \
   --prior-ledger docs/qualification/ledger.json \
   --output docs/qualification/ledger.json --generated-at 2026-11-12T00:00:00Z

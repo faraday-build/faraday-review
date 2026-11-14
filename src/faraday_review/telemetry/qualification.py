@@ -566,8 +566,12 @@ def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
     collected_at order, so a later collection's view of a run wins and an
     artifact archived by any collection stays archived. A file counts only if
     the archive still holds it with the recorded sha256 (else
-    `collection_file_missing`). Then, for every completed, non-skipped run
-    and each of its attempts 1..run_attempt:
+    `collection_file_missing`). An attempt is checked once any collection
+    proves it completed: attempt N of a completed, non-skipped run, and every
+    attempt before the observed one (GitHub reruns only a completed run). A
+    later view of an unfinished or skipped rerun excludes only that attempt
+    and never erases an earlier attempt's proof (Codex r18 F1). For each
+    checked attempt:
 
     * an archived telemetry.jsonl: fine;
     * else an artifact for that attempt that expired unarchived:
@@ -578,6 +582,9 @@ def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
     `enrolled_repo_without_runs`."""
     present = {(i["path"], i["sha256"]) for i in inputs}
     repos: dict[str, dict[int, dict[str, Any]]] = {}
+    # (repo, run) -> attempt -> conclusion of a snapshot where that attempt
+    # was the run's completed, non-skipped final attempt (else None).
+    completed: dict[tuple[str, int], dict[int, str | None]] = {}
     artifacts: dict[tuple[str, int], dict[int, dict[str, Any]]] = {}
     ordered = sorted(manifests, key=lambda m: (_sort_key_ts(m[1]["collected_at"]), m[0]))
     for _, manifest in ordered:
@@ -586,6 +593,11 @@ def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
             runs = repos.setdefault(key, {})
             for run in repo["runs"]:
                 runs[run["run_id"]] = run
+                done = completed.setdefault((key, run["run_id"]), {})
+                for attempt in range(1, run["run_attempt"]):
+                    done.setdefault(attempt, None)
+                if run["status"] == "completed" and run["conclusion"] != "skipped":
+                    done[run["run_attempt"]] = run["conclusion"]
                 by_id = artifacts.setdefault((key, run["run_id"]), {})
                 for art in run["artifacts"]:
                     merged = by_id.setdefault(art["artifact_id"], {
@@ -607,11 +619,9 @@ def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
             anomalies.append({"kind": "enrolled_repo_without_runs", "repository": key})
             continue
         for run_id in sorted(runs):
-            run = runs[run_id]
-            if run["status"] != "completed" or run["conclusion"] == "skipped":
-                continue
+            done = completed[(key, run_id)]
             arts = artifacts.get((key, run_id), {})
-            for attempt in range(1, run["run_attempt"] + 1):
+            for attempt in sorted(done):
                 mine = {aid: a for aid, a in arts.items() if a["attempt"] == attempt}
                 if any(a["telemetry"] for a in mine.values()):
                     continue
@@ -624,8 +634,7 @@ def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
                 if not lost:
                     anomalies.append({"kind": "run_without_telemetry", "repository": key,
                                       "run_id": run_id, "run_attempt": attempt,
-                                      "conclusion": run["conclusion"]
-                                      if attempt == run["run_attempt"] else None})
+                                      "conclusion": done[attempt]})
 
 
 def aggregate(input_dir: Path, *, generated_at: str,
