@@ -170,6 +170,14 @@ def _event_key(event: dict[str, Any]) -> tuple[str, str]:
     return ("legacy_content", hashlib.sha256(canonical_bytes(event)).hexdigest())
 
 
+def _run_numbers(execution: dict[str, Any]) -> tuple[int, int]:
+    """`run_id` and `run_attempt` as ints. JSON Schema accepts an integral
+    float (101.0) as an integer, but it serializes differently, so identity
+    and comparisons use the int value (Codex P2, #7). The raw record keeps
+    its original form for content comparison (C2-C4)."""
+    return int(execution["run_id"]), int(execution["run_attempt"])
+
+
 def _execution_key(event: dict[str, Any]) -> str | None:
     """Execution identity digest, or None when unknown (C8: never
     synthesized for a record without `event_id`). The repository is
@@ -178,7 +186,7 @@ def _execution_key(event: dict[str, Any]) -> str | None:
     if isinstance(execution, dict):
         return _sha256_bytes(canonical_bytes([
             execution["provider"], repo_identity(event["repository"]),
-            execution["run_id"], execution["run_attempt"]]))
+            *_run_numbers(execution)]))
     if isinstance(event.get("event_id"), str):
         return _sha256_bytes(canonical_bytes(["event", event["event_id"]]))
     return None
@@ -489,13 +497,13 @@ def _binding_mismatch(event: dict[str, Any], binding: dict[str, Any]) -> list[st
     """Informational cross-check of a v0.4.0 record's execution against the
     workflow's own run-binding.json (identity rules, Security). It never
     changes a count and never gives a legacy record an identity."""
-    execution = event["execution"]
+    run_id, run_attempt = _run_numbers(event["execution"])
     observed = {
         "caller_repo": repo_identity(binding["caller_repo"]) == repo_identity(event["repository"]),
         "pr_number": binding["pr_number"] == str(event["pr_number"]),
         "head_sha": binding["head_sha"] == event["head_sha"],
-        "run_id": binding["run_id"] == str(execution["run_id"]),
-        "run_attempt": binding["run_attempt"] == str(execution["run_attempt"]),
+        "run_id": binding["run_id"] == str(run_id),
+        "run_attempt": binding["run_attempt"] == str(run_attempt),
     }
     return [f for f in _BINDING_FIELDS if not observed[f]]
 

@@ -278,6 +278,26 @@ def test_t08f_representative_is_never_a_conflicted_event(tmp_path):
     assert run["occurrence_final_statuses"] == {"completed": 1}
 
 
+def test_t04c_integral_float_run_fields_are_the_same_execution(tmp_path):
+    """Codex P2 (#7, qualification.py:181). JSON Schema accepts 101.0 as an
+    integer, so a re-serialized archive can carry it. It must not create a
+    second execution identity, which would hide C7 and inflate the counts."""
+    write_run(tmp_path, "a", event_id=E1, execution=gha(101, 1))
+    write_run(tmp_path, "b", event_id=E2, execution={"provider": "github_actions",
+                                                     "run_id": 101.0, "run_attempt": 1.0})
+    ledger = _ledger(tmp_path)
+    assert "multiple_events_per_execution" in _kinds(ledger)
+    assert ledger["counts"]["identity"]["executions_exact"] == 1
+    assert _only_run(ledger)["executions_exact"] == 1
+
+
+def test_t18d_integral_float_run_fields_match_the_binding(tmp_path):
+    good = write_run(tmp_path, "good", pr=1, event_id=E1,
+                     execution={"provider": "github_actions", "run_id": 101.0, "run_attempt": 1.0})
+    _binding(good)
+    assert "run_binding_mismatch" not in _kinds(_ledger(tmp_path))
+
+
 def test_t04b_repository_is_part_of_execution_identity(tmp_path):
     """Equal run_id and run_attempt in two repositories are two executions."""
     write_run(tmp_path, "a", repo="faraday-build/one", event_id=E1, execution=gha(101))
