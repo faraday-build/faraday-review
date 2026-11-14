@@ -1,6 +1,6 @@
 """JSON Schema validation against the vendored agent-contracts release.
 
-Schemas are vendored from tomrivera-ops/agent-contracts v0.3.0 (see
+Schemas are vendored from tomrivera-ops/agent-contracts v0.4.0 (see
 src/faraday_review/schemas/README.md for provenance). No network fetch:
 the validator works offline and its inputs cannot vary with registry
 availability.

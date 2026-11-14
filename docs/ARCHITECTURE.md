@@ -55,7 +55,7 @@ it affects timing only and cannot reach a decision.
 
 ## Contracts
 
-agent-contracts **v0.3.0**, vendored under `src/faraday_review/schemas/`.
+agent-contracts **v0.4.0**, vendored under `src/faraday_review/schemas/`.
 Ruling 16: evidence contract minor N and N-1 accepted;
 `evaluated_contract_minor` recorded in every decision. The evidence
 envelope is `PullRequestReviewEvidence` — distinct from the TR-004

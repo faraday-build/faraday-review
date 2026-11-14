@@ -1,0 +1,2875 @@
+{
+ "contract_version": "v0.4.0",
+ "format": "agent-contracts/review-telemetry-identity-vectors/v1",
+ "records": [
+  {
+   "description": "v0.3.0 record without identity (historical input)",
+   "id": "R01",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.3.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "evidence_class": "deterministic",
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": true
+  },
+  {
+   "description": "v0.4.0 record with event_id and execution",
+   "id": "R02",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": true
+  },
+  {
+   "description": "v0.4.0 record with event_id only (local run)",
+   "id": "R03",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": true
+  },
+  {
+   "description": "v0.4.0 record without identity fields",
+   "id": "R04",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "evidence_class": "deterministic",
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": true
+  },
+  {
+   "description": "UUID version 7 event_id",
+   "id": "R05",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "01933b2e-7c4a-7d10-b8e2-5f6a7b8c9d0e",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": true
+  },
+  {
+   "description": "run_attempt above 1 (re-run)",
+   "id": "R06",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 3,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": true
+  },
+  {
+   "description": "maximum safe-integer run_id",
+   "id": "R07",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 9007199254740991
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": true
+  },
+  {
+   "description": "execution without event_id",
+   "id": "N01",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "event_id on a v0.3.0 record",
+   "id": "N02",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.3.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "execution on a v0.3.0 record",
+   "id": "N03",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.3.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "run_attempt 0",
+   "id": "N04",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 0,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "run_id 0",
+   "id": "N05",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 0
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "run_id as string",
+   "id": "N06",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": "43507102983"
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "run_id non-integer number",
+   "id": "N07",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 1.5
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "run_id above 2^53-1",
+   "id": "N08",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 9007199254740992
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "unsupported provider",
+   "id": "N09",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "gitlab_ci",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "unsupported execution metadata (job)",
+   "id": "N10",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "job": "shadow",
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "unsupported execution metadata (trace_id)",
+   "id": "N11",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983,
+     "trace_id": "t-1"
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "execution missing run_attempt",
+   "id": "N12",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "execution missing provider",
+   "id": "N13",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "execution null",
+   "id": "N14",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": null,
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "uppercase event_id",
+   "id": "N15",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4F1C2A3B-5D6E-4F70-8A91-B2C3D4E5F601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "nil UUID event_id",
+   "id": "N16",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "00000000-0000-0000-0000-000000000000",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "UUID version 1 event_id",
+   "id": "N17",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-1f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "braced event_id",
+   "id": "N18",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "{4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601}",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "empty event_id",
+   "id": "N19",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "event_id not a string",
+   "id": "N20",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": 12345,
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "non-RFC variant nibble",
+   "id": "N21",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-ca91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "unknown top-level identity field (attempt_id)",
+   "id": "N22",
+   "record": {
+    "approval_authorized": false,
+    "attempt_id": "a1",
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "event_id with trailing newline",
+   "id": "N23",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601\n",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "uppercase hex only in UUID group 1",
+   "id": "N24",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "C0FFEE0A-1bcd-4abc-8def-0123456789ab",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "uppercase hex only in UUID group 2",
+   "id": "N25",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "c0ffee0a-1BCD-4abc-8def-0123456789ab",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "uppercase hex only in UUID group 3",
+   "id": "N26",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "c0ffee0a-1bcd-4ABC-8def-0123456789ab",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "uppercase hex only in UUID group 4",
+   "id": "N27",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "c0ffee0a-1bcd-4abc-8DEF-0123456789ab",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  },
+  {
+   "description": "uppercase hex only in UUID group 5",
+   "id": "N28",
+   "record": {
+    "approval_authorized": false,
+    "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+    "blocking_reasons": [],
+    "contract_version": "v0.4.0",
+    "created_at": "2026-11-01T10:00:00Z",
+    "deterministic_finding_counts": {
+     "blocking": 0,
+     "info": 0,
+     "warning": 1
+    },
+    "duration_seconds": 41.7,
+    "event_id": "c0ffee0a-1bcd-4abc-8def-0123456789AB",
+    "evidence_class": "deterministic",
+    "execution": {
+     "provider": "github_actions",
+     "run_attempt": 1,
+     "run_id": 43507102983
+    },
+    "final_status": "completed",
+    "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+    "founder_review_required": true,
+    "github_requests_used": 19,
+    "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+    "merge_authorized": false,
+    "pr_number": 42,
+    "repository": "faraday-build/faraday-review",
+    "retries": 1,
+    "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+    "reviewer_version": "v1.0.0",
+    "risk_class": "red",
+    "stale_state": "fresh"
+   },
+   "valid": false
+  }
+ ],
+ "rules": "review-telemetry-identity.md",
+ "schema": "review-telemetry-event.schema.json",
+ "sets": [
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 1.5,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 9.0,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1002
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "separate runs, same second, differ only in duration_seconds",
+   "expected": {
+    "anomalies": [],
+    "bounds": {
+     "max": 2,
+     "min": 2
+    },
+    "conflicts": [],
+    "events": 2,
+    "execution_count": 2,
+    "executions_exact": 2,
+    "invalid": 0
+   },
+   "id": "S01"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1002
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "separate runs with identical content except identity",
+   "expected": {
+    "anomalies": [],
+    "bounds": {
+     "max": 2,
+     "min": 2
+    },
+    "conflicts": [],
+    "events": 2,
+    "execution_count": 2,
+    "executions_exact": 2,
+    "invalid": 0
+   },
+   "id": "S02"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "failure_mode": "runner_lost",
+      "final_status": "failed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a1/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 2,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a2/telemetry.jsonl"
+    }
+   ],
+   "description": "re-run: same run_id, attempt 1 failed then attempt 2 completed",
+   "expected": {
+    "anomalies": [],
+    "bounds": {
+     "max": 2,
+     "min": 2
+    },
+    "conflicts": [],
+    "events": 2,
+    "execution_count": 2,
+    "executions_exact": 2,
+    "invalid": 0
+   },
+   "id": "S03"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 3,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    }
+   ],
+   "description": "in-execution API retries are not attempts",
+   "expected": {
+    "anomalies": [],
+    "bounds": {
+     "max": 1,
+     "min": 1
+    },
+    "conflicts": [],
+    "events": 1,
+    "execution_count": 1,
+    "executions_exact": 1,
+    "invalid": 0
+   },
+   "id": "S04"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 43507102983
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 43507102983
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "archive/2026-11/a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 43507102983
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "docs/qualification/artifacts/x/telemetry.jsonl"
+    }
+   ],
+   "description": "one event archived three times",
+   "expected": {
+    "anomalies": [],
+    "bounds": {
+     "max": 1,
+     "min": 1
+    },
+    "conflicts": [],
+    "events": 1,
+    "execution_count": 1,
+    "executions_exact": 1,
+    "invalid": 0
+   },
+   "id": "S05"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 1.5,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 9.0,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "conflicting event_id: same id, different content",
+   "expected": {
+    "anomalies": [
+     "event_id_conflict"
+    ],
+    "bounds": {
+     "max": 0,
+     "min": 0
+    },
+    "conflicts": [
+     "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601"
+    ],
+    "events": 0,
+    "execution_count": 0,
+    "executions_exact": 0,
+    "invalid": 0
+   },
+   "id": "S06"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/other",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1002
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "c/telemetry.jsonl"
+    }
+   ],
+   "description": "conflicting event_id across repositories, plus a clean event",
+   "expected": {
+    "anomalies": [
+     "event_id_conflict"
+    ],
+    "bounds": {
+     "max": 1,
+     "min": 1
+    },
+    "conflicts": [
+     "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601"
+    ],
+    "events": 1,
+    "execution_count": 1,
+    "executions_exact": 1,
+    "invalid": 0
+   },
+   "id": "S07"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "two events claim one execution",
+   "expected": {
+    "anomalies": [
+     "multiple_events_per_execution"
+    ],
+    "bounds": {
+     "max": 1,
+     "min": 1
+    },
+    "conflicts": [],
+    "events": 2,
+    "execution_count": 1,
+    "executions_exact": 1,
+    "invalid": 0
+   },
+   "id": "S08"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "Faraday-Build/Faraday-Review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "repository spelling differs, same execution",
+   "expected": {
+    "anomalies": [
+     "multiple_events_per_execution"
+    ],
+    "bounds": {
+     "max": 1,
+     "min": 1
+    },
+    "conflicts": [],
+    "events": 2,
+    "execution_count": 1,
+    "executions_exact": 1,
+    "invalid": 0
+   },
+   "id": "S09"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.3.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.3.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "legacy: byte-identical v0.3.0 records in two archives",
+   "expected": {
+    "anomalies": [
+     "legacy_execution_identity_unknown"
+    ],
+    "bounds": {
+     "max": 2,
+     "min": 1
+    },
+    "conflicts": [],
+    "events": 1,
+    "execution_count": null,
+    "executions_exact": 0,
+    "invalid": 0
+   },
+   "id": "S10"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.3.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 1.5,
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.3.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 9.0,
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "legacy: v0.3.0 records differing only in duration_seconds",
+   "expected": {
+    "anomalies": [
+     "legacy_execution_identity_unknown"
+    ],
+    "bounds": {
+     "max": 2,
+     "min": 2
+    },
+    "conflicts": [],
+    "events": 2,
+    "execution_count": null,
+    "executions_exact": 0,
+    "invalid": 0
+   },
+   "id": "S11"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.3.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.3.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "c/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1002
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "d/telemetry.jsonl"
+    }
+   ],
+   "description": "mixed v0.3.0 and v0.4.0",
+   "expected": {
+    "anomalies": [
+     "legacy_execution_identity_unknown"
+    ],
+    "bounds": {
+     "max": 4,
+     "min": 3
+    },
+    "conflicts": [],
+    "events": 3,
+    "execution_count": null,
+    "executions_exact": 2,
+    "invalid": 0
+   },
+   "id": "S12"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b2/telemetry.jsonl"
+    }
+   ],
+   "description": "event_id without execution: each event is its own execution",
+   "expected": {
+    "anomalies": [],
+    "bounds": {
+     "max": 2,
+     "min": 2
+    },
+    "conflicts": [],
+    "events": 2,
+    "execution_count": 2,
+    "executions_exact": 2,
+    "invalid": 0
+   },
+   "id": "S13"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [
+       "github_api_budget_exceeded"
+      ],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "block",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [
+       "github_api_budget_exceeded"
+      ],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f2a3b4c5d",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1002
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "block",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "API budget exhausted in two separate runs, same second",
+   "expected": {
+    "anomalies": [],
+    "bounds": {
+     "max": 2,
+     "min": 2
+    },
+    "conflicts": [],
+    "events": 2,
+    "execution_count": 2,
+    "executions_exact": 2,
+    "invalid": 0
+   },
+   "id": "S14"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1002
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "b/telemetry.jsonl"
+    }
+   ],
+   "description": "invalid copy is excluded and reported",
+   "expected": {
+    "anomalies": [
+     "invalid_record"
+    ],
+    "bounds": {
+     "max": 1,
+     "min": 1
+    },
+    "conflicts": [],
+    "events": 1,
+    "execution_count": 1,
+    "executions_exact": 1,
+    "invalid": 1
+   },
+   "id": "S15"
+  },
+  {
+   "copies": [
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 1,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a1/telemetry.jsonl"
+    },
+    {
+     "record": {
+      "approval_authorized": false,
+      "base_sha": "1bdf555a2c9de08a6f3b7c41d95e8f20a4b6c8d1",
+      "blocking_reasons": [],
+      "contract_version": "v0.4.0",
+      "created_at": "2026-11-01T10:00:00Z",
+      "deterministic_finding_counts": {
+       "blocking": 0,
+       "info": 0,
+       "warning": 1
+      },
+      "duration_seconds": 41.7,
+      "event_id": "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601",
+      "evidence_class": "deterministic",
+      "execution": {
+       "provider": "github_actions",
+       "run_attempt": 2,
+       "run_id": 1001
+      },
+      "final_status": "completed",
+      "fingerprint": "sha256:2d8e1a94c6f07b35d9e82f41a0c65d7b3f9e8a12c4d06b58e7f3a921d0c84b6e",
+      "founder_review_required": true,
+      "github_requests_used": 19,
+      "head_sha": "f674025b3d0ea19c7e4f8d52ea6f9031b5c7d9e2",
+      "merge_authorized": false,
+      "pr_number": 42,
+      "repository": "faraday-build/faraday-review",
+      "retries": 1,
+      "review_id": "frr-faraday-build-faraday-review-42-f674025b3d0e",
+      "reviewer_version": "v1.0.0",
+      "risk_class": "red",
+      "stale_state": "fresh"
+     },
+     "source": "a2/telemetry.jsonl"
+    }
+   ],
+   "description": "conflict on a re-run: same id reused for attempt 2",
+   "expected": {
+    "anomalies": [
+     "event_id_conflict"
+    ],
+    "bounds": {
+     "max": 0,
+     "min": 0
+    },
+    "conflicts": [
+     "4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601"
+    ],
+    "events": 0,
+    "execution_count": 0,
+    "executions_exact": 0,
+    "invalid": 0
+   },
+   "id": "S16"
+  }
+ ]
+}

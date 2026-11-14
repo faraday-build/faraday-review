@@ -1,4 +1,4 @@
-"""Dataclass mirrors of the agent-contracts v0.3.0 review-plane contracts.
+"""Dataclass mirrors of the agent-contracts review-plane contracts (v0.3.0 shapes; unchanged in v0.4.0).
 
 Construction happens wherever data is assembled, but the authorization
 fields (approval_authorized, merge_authorized, founder_review_required,

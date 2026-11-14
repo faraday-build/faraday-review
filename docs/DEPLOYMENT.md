@@ -5,7 +5,7 @@
 - governance release with the `review-policy/` bundle: **v1.1.0**
 - `FARADAY_POLICY_DIGEST` org/repo Actions variable set to the released
   digest: `sha256:32eeb3e07271fff267908bc428d77477caa403d9e0f8b0a0244d8c26aec73e12`
-- agent-contracts **v0.3.0** (vendored; no runtime fetch)
+- agent-contracts **v0.4.0** (vendored; no runtime fetch)
 - gitleaks available on the runner (installed by the workflow)
 
 ## Reusable workflow location

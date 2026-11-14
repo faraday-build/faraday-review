@@ -1,0 +1,18 @@
+{
+  "bundle_sha256": "4b8847341138025d60ecdd942e4d417eaeb607355a8e6727c64f1a2cc8ef3f60",
+  "files": {
+    "conformance/review-telemetry-identity.vectors.json": "a8afbf27bca38e67dce3e0b52f37748150ff84f8a5077068f1b5b81effa5e041",
+    "deterministic-finding.schema.json": "d254c9711a6191268d23f549b87ed18eb9b6e112d7d334c1bd2fc85765f14a77",
+    "evidence-class.schema.json": "819c7490d63a5ea3559848dcd1a2b25796dbe32acc34af2fdd5dfe8928031a6e",
+    "founder-escalation.schema.json": "906c09720303f712ac522d912a414b5aa1759b1d37fb69ef59eda01aab28457c",
+    "merge-authorization.schema.json": "b5f7bbd5946d1a366b23f306d6cbf0a68d0978538fe9c615222d321ef21add3f",
+    "pull-request-context.schema.json": "f025ac9d23b33d8400e67cd98b64767bc6a5e9048f5df80e74ddd466636bcae9",
+    "pull-request-review-evidence.schema.json": "fff1008fa14b15bdf9b2eb04da4c473c04f87d07eee5053ac2846455417f6e5c",
+    "review-telemetry-event.schema.json": "db065b0b1ec0a1a90923cd83277785ccb6f900d5a061e8ca879dcdc0fb770458",
+    "review-telemetry-identity.md": "1e2fb38cbabd0a82840b67e77810b31028654b1e47a86d7816b4c66cd1b479e0",
+    "risk-assessment.schema.json": "5d2ce96152cbef7c9156465b462d1e3b675c5be1244c5e3820baaa4025879f43"
+  },
+  "source": "tomrivera-ops/agent-contracts",
+  "source_commit": "b7a60291766c54070f8851a080d72fa1d054343a",
+  "tag": "v0.4.0"
+}

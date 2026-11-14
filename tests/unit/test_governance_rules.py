@@ -56,10 +56,11 @@ def test_broken_bundle_fails_closed(tmp_path: Path):
 
 def test_contract_minor_window():
     """Ruling 16: accept N and N-1; reject N-2 and other majors."""
-    assert contract_version_reasons("v0.3.0") == ([], 3)
-    assert contract_version_reasons("v0.2.9") == ([], 2)
-    assert contract_version_reasons("v0.1.0")[0] == ["contract_version_unsupported"]
-    assert contract_version_reasons("v1.3.0")[0] == ["contract_version_unsupported"]
+    assert contract_version_reasons("v0.4.0") == ([], 4)
+    assert contract_version_reasons("v0.3.9") == ([], 3)
+    assert contract_version_reasons("v0.2.0")[0] == ["contract_version_unsupported"]
+    assert contract_version_reasons("v0.5.0")[0] == ["contract_version_unsupported"]
+    assert contract_version_reasons("v1.4.0")[0] == ["contract_version_unsupported"]
     assert contract_version_reasons(None)[0] == ["contract_version_unsupported"]
     assert contract_version_reasons("0.3.0")[0] == ["contract_version_unsupported"]
 

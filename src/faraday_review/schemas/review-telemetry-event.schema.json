@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://faraday-lab.dev/schemas/review-telemetry-event.schema.json",
   "title": "ReviewTelemetryEvent",
-  "description": "Append-only shadow-telemetry record for one Faraday Review run (Phase 1.11), including founder adjudication when recorded. Adjudication matching is on the founder's immutable account node_id, never on login; non-founder labels are rejected and logged as adjudication_rejected. No model cost fields exist in Phase 1 — there is no model. Secret values never appear in any field.",
+  "description": "Append-only shadow-telemetry record for one Faraday Review run (Phase 1.11), including founder adjudication when recorded. Adjudication matching is on the founder's immutable account node_id, never on login; non-founder labels are rejected and logged as adjudication_rejected. No model cost fields exist in Phase 1 — there is no model. Secret values never appear in any field. From v0.4.0 a record MAY carry execution identity (event_id, execution); semantics are normative in review-telemetry-identity.md. v0.3.0 records carry no execution identity and consumers MUST NOT synthesize one.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -99,6 +99,51 @@
       },
       "description": "Immutable account node_id captured during discovery; login is informational only."
     },
-    "created_at": { "type": "string", "format": "date-time" }
+    "created_at": { "type": "string", "format": "date-time" },
+    "event_id": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "v0.4.0+. Producer-generated identifier of this emitted event: a lowercase RFC 9562 UUID, version 4 or 7, never derived from event content. Every archived copy of the event carries the same value; no two emissions share one. Same meaning as execution-event.event_id. Not a task, review or transport identifier."
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "run_id", "run_attempt"],
+      "properties": {
+        "provider": {
+          "enum": ["github_actions"],
+          "description": "Platform that ran the reviewer. Closed set; a new provider is a contract change."
+        },
+        "run_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "GitHub Actions github.run_id of the workflow run that emitted this event."
+        },
+        "run_attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "GitHub Actions github.run_attempt. A re-run of the same run_id is a distinct execution with a higher run_attempt. Unrelated to `retries` (in-execution API retries)."
+        }
+      },
+      "description": "v0.4.0+. The platform execution that emitted this event. Requires event_id. Execution identity is (provider, repository casefolded, run_id, run_attempt)."
+    }
+  },
+  "dependentRequired": {
+    "execution": ["event_id"]
+  },
+  "if": {
+    "anyOf": [
+      { "required": ["event_id"] },
+      { "required": ["execution"] }
+    ]
+  },
+  "then": {
+    "properties": {
+      "contract_version": { "not": { "pattern": "^v0\\.[0-3]\\." } }
+    }
   }
 }
