@@ -303,8 +303,9 @@ def _cmd_shadow_run(args, run: _ShadowRun) -> int:
     findings.extend(collect_secret_alerts(client, args.repository))
 
     # Freshness gate 1: head must still match before evidence is final.
-    run.stale_state = "fresh"
     refetched = fetch_head_sha(client, args.repository, args.pr)
+    # Freshness is known only once the comparison ran (Codex P2, #8).
+    run.stale_state = "fresh"
     if not is_fresh(context.head_sha, refetched):
         run.stale_state = "stale_before_validation"
         findings.append(

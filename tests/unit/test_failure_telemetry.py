@@ -451,3 +451,19 @@ def test_decision_captured_before_outputs_are_written(offline, tmp_path, monkeyp
     assert event["failure_mode"] == "internal_error"
     for key in ("risk_class", "blocking_reasons", "founder_review_required"):
         assert event[key] == decision[key], key
+
+
+# ------------------------------------------------------------ Codex round 2 (bbba9c3)
+
+
+def test_first_head_fetch_failure_leaves_freshness_unknown(offline, tmp_path, monkeypatch):
+    """Codex P2 #8 cli.py:308: no head comparison completed, so the failed
+    record must not claim stale_state fresh."""
+    def boom(*a, **k):
+        raise BudgetExceededError("budget spent before the head refetch")
+    monkeypatch.setattr(cli, "fetch_head_sha", boom)
+    out = tmp_path / "a"
+    assert _shadow(offline, out) == 2
+    (event,) = _lines(out)
+    assert event["failure_mode"] == "github_api_budget_exceeded"
+    assert "stale_state" not in event
