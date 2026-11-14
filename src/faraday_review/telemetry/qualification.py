@@ -9,6 +9,15 @@ report from that ledger.
 Determinism: no clock (generated_at is an explicit argument), no network,
 no set iteration reaching output, canonical serialization only.
 
+Identity (agent-contracts v0.4.0, schemas/review-telemetry-identity.md):
+every copy has an event key (C2: `event_id`, else a content key over the
+full record), an execution identity (`execution`, else the event when only
+`event_id` is present, else unknown) and an eligibility bit (C4: false for
+an `event_id` claimed by different content). Conflicts and duplicate
+executions are detected over the whole input, not per run. Legacy records
+never get a synthesized execution identity (C8); counts that depend on one
+are reported as null with bounds.
+
 Authorization boundary: this module is a telemetry *consumer*. It never
 emits authorization fields. The Validator's class is carried under the
 neutral name `classifier_class`, `founder_review_required` as `escalated`,
@@ -38,8 +47,10 @@ from .throughput import _parse, _percentile
 TELEMETRY_FILE = "telemetry.jsonl"
 DECISION_FILE = "decision.json"
 DEFAULT_FOUNDER_NODE_ID = "U_kgDODk3msA"
-LEDGER_FORMAT = "faraday-review/qualification-ledger/v1"
-READINESS_FORMAT = "faraday-review/qualification-readiness/v1"
+LEDGER_FORMAT = "faraday-review/qualification-ledger/v2"
+LEDGER_FORMAT_V1 = "faraday-review/qualification-ledger/v1"
+READINESS_FORMAT = "faraday-review/qualification-readiness/v2"
+RUN_BINDING_FILE = "run-binding.json"
 
 # Hard floor. The Phase 1 gate may be raised, never lowered.
 GATE_THRESHOLD_FLOOR = 20
@@ -148,12 +159,38 @@ def _read_jsonl(path: Path, rel: str, anomalies: list[dict[str, Any]]) -> list[t
 # ---------------------------------------------------------------- aggregate
 
 
+def _event_key(event: dict[str, Any]) -> tuple[str, str]:
+    """C2. (kind, value): the producer's `event_id`, else a content key over
+    the full validated record. Never a projection: a key over a subset of
+    fields merges executions that differ only in the dropped fields (Codex
+    P2, 8088813:229)."""
+    event_id = event.get("event_id")
+    if isinstance(event_id, str):
+        return ("event_id", event_id)
+    return ("legacy_content", hashlib.sha256(canonical_bytes(event)).hexdigest())
+
+
+def _execution_key(event: dict[str, Any]) -> str | None:
+    """Execution identity digest, or None when unknown (C8: never
+    synthesized for a record without `event_id`). The repository is
+    casefolded, as everywhere else identity is compared."""
+    execution = event.get("execution")
+    if isinstance(execution, dict):
+        return _sha256_bytes(canonical_bytes([
+            execution["provider"], repo_identity(event["repository"]),
+            execution["run_id"], execution["run_attempt"]]))
+    if isinstance(event.get("event_id"), str):
+        return _sha256_bytes(canonical_bytes(["event", event["event_id"]]))
+    return None
+
+
 def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str,
                 anomalies: list[dict[str, Any]]) -> dict[str, Any]:
-    """One raw occurrence copy. `_decision_evidence` (internal, never output)
-    records what the adjacent decision.json proved: "verified", "mismatch"
-    (present but its digest does not reproduce the event fingerprint) or
-    "absent"."""
+    """One raw occurrence copy. Underscored fields are internal, never
+    output. `_decision_evidence` records what the adjacent decision.json
+    proved: "verified", "mismatch" (present but its digest does not
+    reproduce the event fingerprint) or "absent". `_raw` is the full
+    validated record, the only input to the event key and `event_sha256`."""
     digest_value = None
     verified = False
     evidence = "absent"
@@ -175,6 +212,7 @@ def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str
     if event.get("approval_authorized") is True or event.get("merge_authorized") is True:
         anomalies.append({"kind": "authorization_flag_true_in_telemetry", "source": rel,
                           "review_id": event["review_id"]})
+    kind, value = _event_key(event)
     return {
         "review_id": event["review_id"],
         "fingerprint": event["fingerprint"],
@@ -193,22 +231,22 @@ def _run_record(event: dict[str, Any], decision: dict[str, Any] | None, rel: str
         "failure_mode": event.get("failure_mode"),
         "created_at": event["created_at"],
         "_decision_evidence": evidence,
+        "_raw": event,
+        "_key_kind": kind,
+        "_key_value": value,
+        "_event_key": _sha256_bytes(canonical_bytes([kind, value])),
+        "_execution": event.get("execution"),
+        "_execution_key": _execution_key(event),
     }
 
 
 _DECISION_DERIVED = ("policy_bundle_digest", "policy_digest_verified", "_decision_evidence")
 
 
-def _event_bytes(run: dict[str, Any]) -> bytes:
-    """Identity of the telemetry event itself. The digest fields are derived
-    from whether a decision.json sat next to the file, so a partial copy of
-    the same event is the same payload, not a new one (Codex P2, c92d872)."""
-    return canonical_bytes({k: v for k, v in run.items() if k not in _DECISION_DERIVED})
-
-
 def _eligible(occ: dict[str, Any]) -> bool:
     """Only a completed run whose freshness gates passed can count for
-    qualification or select a PR's current head."""
+    qualification or select a PR's current head. Callers apply it to
+    identity-eligible occurrences only (C4), see `_collapse`."""
     return occ["final_status"] == "completed" and occ["stale_state"] == "fresh"
 
 
@@ -216,32 +254,41 @@ def _budget_exhausted(occ: dict[str, Any]) -> bool:
     return BUDGET_REASON in occ["blocking_reasons"] or occ["failure_mode"] == BUDGET_REASON
 
 
-def _occurrences(group: list[tuple[dict[str, Any], str]]) -> list[dict[str, Any]]:
-    """Distinct execution occurrences of one run, in time order.
+def _occurrences(group: list[tuple[dict[str, Any], str]],
+                 conflicted: frozenset[str] | set[str]) -> list[dict[str, Any]]:
+    """Distinct events of one run, in time order.
 
-    Copies of the same event (byte-identical event content, wherever it was
-    archived and whether or not decision.json travelled with it) are one
-    occurrence; their verification evidence is reconciled, never chosen by
-    ingestion order. Every distinct occurrence is retained, failed or not, so
-    nothing downstream has to re-derive history from a representative."""
-    by_event: dict[bytes, list[tuple[dict[str, Any], str]]] = {}
+    Copies with the same event key are one event (C3), wherever they were
+    archived and whether or not decision.json travelled with them; their
+    verification evidence is reconciled, never chosen by ingestion order.
+    An event whose `event_id` is in `conflicted` (C4, detected over the
+    whole input) is kept for reporting but marked ineligible, and none of
+    its copies contributes policy evidence: a conflict can remove evidence,
+    never add it."""
+    by_event: dict[str, list[tuple[dict[str, Any], str]]] = {}
     for run, src in group:
-        by_event.setdefault(_event_bytes(run), []).append((run, src))
+        by_event.setdefault(run["_event_key"], []).append((run, src))
     out: list[dict[str, Any]] = []
     for key in sorted(by_event):
         copies = by_event[key]
-        event = {k: v for k, v in copies[0][0].items() if k not in _DECISION_DERIVED}
-        evidence = {r["_decision_evidence"] for r, _ in copies}
+        # Conflicted copies differ in content; represent the event by the
+        # canonically smallest one so the choice never depends on order.
+        first = min(copies, key=lambda c: canonical_bytes(c[0]["_raw"]))[0]
+        eligible = not (first["_key_kind"] == "event_id" and first["_key_value"] in conflicted)
+        event = {k: v for k, v in first.items() if k not in _DECISION_DERIVED}
+        evidence = {r["_decision_evidence"] for r, _ in copies} if eligible else set()
         verified = sorted({r["policy_bundle_digest"] for r, _ in copies
-                           if r["policy_digest_verified"] and r["policy_bundle_digest"]})
+                           if r["policy_digest_verified"] and r["policy_bundle_digest"]}) \
+            if eligible else []
         out.append({
             "event": event,
             "key": key,
             "verified_digests": verified,
             "mismatch_sources": sorted({s for r, s in copies
-                                        if r["_decision_evidence"] == "mismatch"}),
+                                        if r["_decision_evidence"] == "mismatch"})
+            if eligible else [],
             "log": {
-                "event_sha256": _sha256_bytes(key),
+                "event_sha256": _sha256_bytes(canonical_bytes(first["_raw"])),
                 "created_at": event["created_at"],
                 "final_status": event["final_status"],
                 "failure_mode": event["failure_mode"],
@@ -252,31 +299,55 @@ def _occurrences(group: list[tuple[dict[str, Any], str]]) -> list[dict[str, Any]
                 "policy_digest_verified": "verified" in evidence,
                 "copies": len(copies),
                 "sources": sorted({s for _, s in copies}),
+                "event_key": key,
+                "event_key_kind": first["_key_kind"],
+                "execution": first["_execution"],
+                "execution_key": first["_execution_key"],
+                "eligible": eligible,
             },
         })
-    return sorted(out, key=lambda o: (_sort_key_ts(o["log"]["created_at"]), o["log"]["event_sha256"]))
+    return sorted(out, key=lambda o: (_sort_key_ts(o["log"]["created_at"]), o["log"]["event_key"]))
 
 
-def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str, Any]]) -> dict[str, Any]:
+def _execution_figures(log: list[dict[str, Any]]) -> dict[str, Any]:
+    """C8 over eligible occurrences: exact known executions, legacy events
+    and copies, and the count (null when any legacy event is present)."""
+    usable = [o for o in log if o["eligible"]]
+    exact = len({o["execution_key"] for o in usable if o["execution_key"] is not None})
+    legacy = [o for o in usable if o["execution_key"] is None]
+    legacy_copies = sum(o["copies"] for o in legacy)
+    return {
+        "executions_exact": exact,
+        "execution_count": exact if not legacy else None,
+        "execution_count_bounds": {"min": exact + len(legacy), "max": exact + legacy_copies},
+        "_legacy_events": len(legacy),
+        "_legacy_copies": legacy_copies,
+    }
+
+
+def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str, Any]], *,
+              conflicted: frozenset[str] | set[str] = frozenset()) -> dict[str, Any]:
     """One run per (review_id, fingerprint), built in one pass from its
-    distinct occurrences (`_occurrences`):
+    distinct events (`_occurrences`):
 
-    * Representative: the latest completed fresh occurrence (else the best
-      remaining by completed, fresh, time), ranked over event content only,
-      so the choice never depends on ingestion order (Codex P2, e44f0e8).
+    * Representative: the latest eligible completed fresh occurrence (else
+      the best remaining by eligible, completed, fresh, time), ranked over
+      event content only, so the choice never depends on ingestion order
+      (Codex P2, e44f0e8).
     * Policy digest: the fingerprint binds the digest, so any verified copy
-      of any occurrence proves it for the whole run; an unverified or
-      partial copy can never erase it (Codex P2s, c92d872 / 7a0da7f). Two
+      of any eligible occurrence proves it for the whole run; an unverified
+      or partial copy can never erase it (Codex P2s, c92d872 / 7a0da7f). Two
       different verified digests, or a decision.json that fails to verify
       beside a verified one, is conflicting evidence and is flagged; the
       former fails closed to unverified.
-    * History: every distinct occurrence is kept in `occurrence_log`; all
-      occurrence summaries and the head-selection timestamp
-      (`last_eligible_created_at`, completed-and-fresh only) are derived
-      from it (Codex P2s, 7a0da7f)."""
-    occs = _occurrences(group)
+    * History: every distinct event is kept in `occurrence_log`, including
+      ineligible ones (C4). Occurrence summaries, the head-selection
+      timestamp (`last_eligible_created_at`) and the execution figures
+      (C8) are derived from its eligible rows only (Codex P2s, 7a0da7f)."""
+    occs = _occurrences(group, conflicted)
     review_id = occs[0]["event"]["review_id"]
-    rep_occ = max(occs, key=lambda o: (o["event"]["final_status"] == "completed",
+    rep_occ = max(occs, key=lambda o: (o["log"]["eligible"],
+                                        o["event"]["final_status"] == "completed",
                                         o["event"]["stale_state"] == "fresh",
                                         _sort_key_ts(o["event"]["created_at"]),
                                         o["log"]["policy_digest_verified"], o["key"]))
@@ -295,15 +366,18 @@ def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str,
         anomalies.append({"kind": "policy_digest_evidence_conflict", "review_id": review_id,
                           "sources": mismatched})
 
-    classes = sorted({str(o["event"]["classifier_class"]) for o in occs})
+    usable_occs = [o for o in occs if o["log"]["eligible"]]
+    classes = sorted({str(o["event"]["classifier_class"]) for o in usable_occs})
     if len(classes) > 1:
         anomalies.append({"kind": "classifier_class_differs_for_same_fingerprint",
                           "review_id": review_id, "classes": classes})
 
     log = [o["log"] for o in occs]
+    usable = [o for o in log if o["eligible"]]
+    timeline = usable or log
 
     def _latest(pred) -> str | None:
-        stamps = [o["created_at"] for o in log if pred(o)]
+        stamps = [o["created_at"] for o in usable if pred(o)]
         return max(stamps, key=_sort_key_ts) if stamps else None
 
     def _tally(values: list[str]) -> dict[str, int]:
@@ -312,32 +386,138 @@ def _collapse(group: list[tuple[dict[str, Any], str]], anomalies: list[dict[str,
             counts[v] = counts.get(v, 0) + 1
         return dict(sorted(counts.items()))
 
-    rep["first_created_at"] = min((o["created_at"] for o in log), key=_sort_key_ts)
-    rep["last_created_at"] = _latest(lambda o: True)
+    rep["first_created_at"] = min((o["created_at"] for o in timeline), key=_sort_key_ts)
+    rep["last_created_at"] = max((o["created_at"] for o in timeline), key=_sort_key_ts)
     rep["last_fresh_created_at"] = _latest(lambda o: o["stale_state"] == "fresh")
     rep["last_eligible_created_at"] = _latest(_eligible)
-    rep["occurrence_stale_states"] = _tally([str(o["stale_state"]) for o in log])
-    rep["occurrence_final_statuses"] = _tally([o["final_status"] for o in log])
+    rep["occurrence_stale_states"] = _tally([str(o["stale_state"]) for o in usable])
+    rep["occurrence_final_statuses"] = _tally([o["final_status"] for o in usable])
     rep["occurrence_failure_modes"] = _tally([o["failure_mode"] or "unspecified"
-                                              for o in log if o["final_status"] == "failed"])
-    rep["occurrence_budget_exhausted"] = sum(1 for o in log if o["budget_exhausted"])
+                                              for o in usable if o["final_status"] == "failed"])
+    rep["occurrence_budget_exhausted"] = sum(1 for o in usable if o["budget_exhausted"])
     rep["occurrence_log"] = log
     rep["occurrences"] = len(group)
     rep["distinct_payloads"] = len(log)
     rep["sources"] = sorted({s for _, s in group})
+    figures = _execution_figures(log)
+    if figures["_legacy_events"]:
+        anomalies.append({"kind": "legacy_execution_identity_unknown", "review_id": review_id,
+                          "legacy_events": figures["_legacy_events"],
+                          "legacy_copies": figures["_legacy_copies"]})
+    rep.update({k: v for k, v in figures.items() if not k.startswith("_")})
     return rep
+
+
+def _identity_scan(raw_runs: list[tuple[dict[str, Any], str]],
+                   anomalies: list[dict[str, Any]]) -> set[str]:
+    """Set-level identity checks over every valid copy (C4, C7). Run
+    grouping cannot be trusted to find these: a reused `event_id` or a
+    duplicated execution can span repositories and review subjects.
+    Returns the conflicted `event_id` values."""
+    contents: dict[str, set[bytes]] = {}
+    sources: dict[str, set[str]] = {}
+    for run, rel in raw_runs:
+        if run["_key_kind"] == "event_id":
+            contents.setdefault(run["_key_value"], set()).add(canonical_bytes(run["_raw"]))
+            sources.setdefault(run["_key_value"], set()).add(rel)
+    conflicted = {eid for eid, bodies in contents.items() if len(bodies) > 1}
+    for eid in sorted(conflicted):
+        anomalies.append({"kind": "event_id_conflict", "event_id": eid,
+                          "sources": sorted(sources[eid])})
+
+    by_execution: dict[str, set[str]] = {}
+    described: dict[str, dict[str, Any]] = {}
+    for run, _ in raw_runs:
+        if run["_execution"] is None or run["_key_value"] in conflicted:
+            continue
+        by_execution.setdefault(run["_execution_key"], set()).add(run["_event_key"])
+        described[run["_execution_key"]] = {**run["_execution"],
+                                            "repository": repo_identity(run["repository"])}
+    for key in sorted(by_execution):
+        if len(by_execution[key]) > 1:
+            anomalies.append({"kind": "multiple_events_per_execution", "execution_key": key,
+                              "execution": described[key],
+                              "event_keys": sorted(by_execution[key])})
+    return conflicted
+
+
+def _set_identity(raw_runs: list[tuple[dict[str, Any], str]], conflicted: set[str],
+                  invalid: int) -> dict[str, Any]:
+    """Ledger-level C8 figures, comparable with the contract's set vectors."""
+    events: dict[str, dict[str, Any]] = {}
+    copies: dict[str, int] = {}
+    for run, _ in raw_runs:
+        if run["_key_kind"] == "event_id" and run["_key_value"] in conflicted:
+            continue
+        events.setdefault(run["_event_key"], run)
+        copies[run["_event_key"]] = copies.get(run["_event_key"], 0) + 1
+    exact = len({r["_execution_key"] for r in events.values() if r["_execution_key"] is not None})
+    legacy = [k for k, r in events.items() if r["_execution_key"] is None]
+    legacy_copies = sum(copies[k] for k in legacy)
+    return {
+        "events": len(events),
+        "executions_exact": exact,
+        "execution_count": exact if not legacy else None,
+        "execution_count_bounds": {"min": exact + len(legacy), "max": exact + legacy_copies},
+        "legacy_events": len(legacy),
+        "legacy_copies": legacy_copies,
+        "event_id_conflicts": len(conflicted),
+        "invalid_events": invalid,
+    }
+
+
+_BINDING_FIELDS = ("caller_repo", "pr_number", "head_sha", "run_id", "run_attempt")
+
+
+def _load_binding(path: Path, input_dir: Path,
+                  anomalies: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not path.is_file() or path.is_symlink():
+        return None
+    rel = path.relative_to(input_dir).as_posix()
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        loaded = None
+    if not isinstance(loaded, dict) or not all(isinstance(loaded.get(f), str)
+                                               for f in _BINDING_FIELDS):
+        anomalies.append({"kind": "malformed_run_binding", "source": rel})
+        return None
+    return loaded
+
+
+def _binding_mismatch(event: dict[str, Any], binding: dict[str, Any]) -> list[str]:
+    """Informational cross-check of a v0.4.0 record's execution against the
+    workflow's own run-binding.json (identity rules, Security). It never
+    changes a count and never gives a legacy record an identity."""
+    execution = event["execution"]
+    observed = {
+        "caller_repo": repo_identity(binding["caller_repo"]) == repo_identity(event["repository"]),
+        "pr_number": binding["pr_number"] == str(event["pr_number"]),
+        "head_sha": binding["head_sha"] == event["head_sha"],
+        "run_id": binding["run_id"] == str(execution["run_id"]),
+        "run_attempt": binding["run_attempt"] == str(execution["run_attempt"]),
+    }
+    return [f for f in _BINDING_FIELDS if not observed[f]]
 
 
 def _prior_inputs(prior_ledger: dict[str, Any], founder_node_id: str) -> set[tuple[str, str]]:
     """(kind, sha256) of every input a previously committed ledger was built
     from. The ledger is a summary, not a re-ingestible sample store, so a
     later aggregation must re-fold the archived raw inputs; this set is what
-    proves none were dropped (Codex P2, 4d18890)."""
-    errors = local_validation_errors("qualification-ledger", prior_ledger)
+    proves none were dropped (Codex P2, 4d18890).
+
+    A v1 ledger (written before agent-contracts v0.4.0) is accepted: its
+    `inputs` have the same shape, and continuity is about inputs, not about
+    how they were summarized. Any other format fails closed."""
+    schema = {LEDGER_FORMAT: "qualification-ledger",
+              LEDGER_FORMAT_V1: "qualification-ledger-v1"}.get(prior_ledger.get("format"))
+    if schema is None:
+        raise QualificationError(
+            f"prior ledger fails qualification-ledger schema: format "
+            f"{prior_ledger.get('format')!r} is neither {LEDGER_FORMAT} nor {LEDGER_FORMAT_V1}")
+    errors = local_validation_errors(schema, prior_ledger)
     if errors:
-        raise QualificationError(f"prior ledger fails qualification-ledger schema: {errors[:3]}")
-    if prior_ledger.get("format") != LEDGER_FORMAT:
-        raise QualificationError(f"prior ledger format {prior_ledger.get('format')!r} != {LEDGER_FORMAT}")
+        raise QualificationError(f"prior ledger fails {schema} schema: {errors[:3]}")
     if prior_ledger.get("founder_node_id") != founder_node_id:
         raise QualificationError("prior ledger founder_node_id differs from this aggregation")
     return {(i["kind"], i["sha256"]) for i in prior_ledger["inputs"]}
@@ -359,6 +539,7 @@ def aggregate(input_dir: Path, *, generated_at: str,
     inputs: list[dict[str, Any]] = []
     raw_runs: list[tuple[dict[str, Any], str]] = []
     raw_adjudications: list[tuple[dict[str, Any], str]] = []
+    invalid_events = 0
 
     wanted = {TELEMETRY_FILE: "telemetry", ADJUDICATIONS_FILE: "adjudications",
               DECISION_FILE: "decision"}
@@ -383,6 +564,7 @@ def aggregate(input_dir: Path, *, generated_at: str,
         if path.is_symlink() or not path.is_file():
             continue
         if path.name == TELEMETRY_FILE:
+            binding = _load_binding(path.parent / RUN_BINDING_FILE, input_dir, anomalies)
             decision = None
             decision_path = path.parent / DECISION_FILE
             if decision_path.is_file() and not decision_path.is_symlink():
@@ -399,7 +581,13 @@ def aggregate(input_dir: Path, *, generated_at: str,
                 if errors:
                     anomalies.append({"kind": "invalid_telemetry_event", "source": rel,
                                       "line": lineno, "errors": errors[:5]})
+                    invalid_events += 1
                     continue
+                if binding is not None and isinstance(event.get("execution"), dict):
+                    fields = _binding_mismatch(event, binding)
+                    if fields:
+                        anomalies.append({"kind": "run_binding_mismatch", "source": rel,
+                                          "line": lineno, "fields": fields})
                 raw_runs.append((_run_record(event, decision, rel, anomalies), rel))
         elif path.name == ADJUDICATIONS_FILE:
             for lineno, record in _read_jsonl(path, rel, anomalies):
@@ -412,11 +600,13 @@ def aggregate(input_dir: Path, *, generated_at: str,
                     continue
                 raw_adjudications.append((record, rel))
 
-    # Deduplicate runs by run identity.
+    # Set-level identity first (C4, C7), then deduplicate runs by run identity.
+    conflicted = _identity_scan(raw_runs, anomalies)
+    identity = _set_identity(raw_runs, conflicted, invalid_events)
     groups: dict[tuple[str, str], list[tuple[dict[str, Any], str]]] = {}
     for run, rel in raw_runs:
         groups.setdefault((run["review_id"], run["fingerprint"]), []).append((run, rel))
-    runs = [_collapse(groups[k], anomalies) for k in sorted(groups)]
+    runs = [_collapse(groups[k], anomalies, conflicted=conflicted) for k in sorted(groups)]
 
     # Correlate into entries keyed by (repository identity, pr, head, digest).
     entries_by_key: dict[tuple[str, int, str, str], dict[str, Any]] = {}
@@ -549,12 +739,36 @@ def aggregate(input_dir: Path, *, generated_at: str,
             "duplicates_collapsed": len(raw_runs) - len(runs),
             "entries": len(entries),
             "superseded_entries": sum(1 for e in entries if e["superseded"]),
+            "identity": identity,
         },
         "anomalies": _sorted_unique(anomalies),
     }
 
 
 # ---------------------------------------------------------------- readiness
+
+
+class _BoundedTally:
+    """Distinct executions with a property: known identities once each, plus
+    legacy events with min = distinct events and max = their copies."""
+
+    def __init__(self) -> None:
+        self.known: set[str] = set()
+        self.legacy = 0
+        self.legacy_copies = 0
+
+    def add(self, occ: dict[str, Any]) -> None:
+        if occ["execution_key"] is None:
+            self.legacy += 1
+            self.legacy_copies += occ["copies"]
+        else:
+            self.known.add(occ["execution_key"])
+
+    def value(self) -> int:
+        return len(self.known) + self.legacy
+
+    def bounds(self) -> dict[str, int]:
+        return {"min": self.value(), "max": len(self.known) + self.legacy_copies}
 
 
 def _summary(values: list[float]) -> dict[str, Any]:
@@ -600,11 +814,14 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
     current_entries = [e for e in real_entries if e["current"]]
 
     # One counted run per PR: latest completed FRESH run on the current head.
-    # Stale-but-completed runs are known-stale evidence and never count.
+    # Stale-but-completed runs are known-stale evidence and never count, and
+    # neither does a run whose only completed fresh events are excluded by an
+    # identity conflict (C4): it has no eligible timestamp.
     per_pr: dict[tuple[str, int], list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for entry in current_entries:
         for run in entry["runs"]:
-            if run["final_status"] == "completed" and run["stale_state"] == "fresh":
+            if (run["final_status"] == "completed" and run["stale_state"] == "fresh"
+                    and run["last_eligible_created_at"] is not None):
                 per_pr.setdefault((repo_identity(entry["repository"]), entry["pr_number"]),
                                   []).append((entry, run))
 
@@ -687,21 +904,29 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         anomalies.append({"kind": "policy_digest_drift", "values": digests})
     if len(versions) > 1:
         anomalies.append({"kind": "reviewer_version_drift", "values": versions})
-    # Infrastructure health is occurrence-level and independent of the
-    # qualification decision above: every distinct execution occurrence of
-    # every real run (current or superseded) counts, so a successful retry
-    # never erases a failure or budget exhaustion that preceded it.
+    # Infrastructure health is execution-level and independent of the
+    # qualification decision above: every eligible event of every real run
+    # (current or superseded) counts, so a successful retry never erases a
+    # failure or budget exhaustion that preceded it. Known executions are
+    # deduplicated across runs by execution identity (C7: two events of one
+    # execution are one failure). A legacy event has unknown execution
+    # identity (C8): it adds one to the figure (the lower bound) and its
+    # copies to the upper bound, and makes the tally "bounded".
     stale_counts: dict[str, int] = {}
-    failure_modes: dict[str, int] = {}
-    budget_occurrences = 0
+    failed = _BoundedTally()
+    budget_tally = _BoundedTally()
+    modes: dict[str, _BoundedTally] = {}
     for run in all_real_runs:
         for occ in run["occurrence_log"]:
+            if not occ["eligible"]:
+                continue
             state = occ["stale_state"] or "unknown"
             stale_counts[state] = stale_counts.get(state, 0) + 1
             if occ["final_status"] == "failed":
-                mode = occ["failure_mode"] or "unspecified"
-                failure_modes[mode] = failure_modes.get(mode, 0) + 1
-            budget_occurrences += 1 if occ["budget_exhausted"] else 0
+                failed.add(occ)
+                modes.setdefault(occ["failure_mode"] or "unspecified", _BoundedTally()).add(occ)
+            if occ["budget_exhausted"]:
+                budget_tally.add(occ)
 
     real_pr_count = len(counted)
     return {
@@ -744,9 +969,12 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
             "reviewer_version_drift": len(versions) > 1,
             "stale_state_counts": dict(sorted(stale_counts.items())),
             "infrastructure_failures": {
-                "failed_runs": sum(failure_modes.values()),
-                "failure_modes": dict(sorted(failure_modes.items())),
-                "api_budget_exceeded_runs": budget_occurrences,
+                "failed_runs": failed.value(),
+                "failure_modes": {m: t.value() for m, t in sorted(modes.items())},
+                "api_budget_exceeded_runs": budget_tally.value(),
+                "status": "bounded" if (failed.legacy or budget_tally.legacy) else "exact",
+                "bounds": {"failed_runs": failed.bounds(),
+                           "api_budget_exceeded_runs": budget_tally.bounds()},
             },
         },
         "anomalies": _sorted_unique(anomalies),

@@ -206,7 +206,8 @@ def test_latest_founder_label_wins_and_relabel_flagged(tmp_path):
 
 
 def test_malformed_and_invalid_lines_are_anomalies_not_runs(tmp_path):
-    write_run(tmp_path, "r1", pr=1, head="h1")
+    # Identified (v0.4.0) so the only anomalies are the two lines under test.
+    write_run(tmp_path, "r1", pr=1, head="h1", event_id="4f1c2a3b-5d6e-4f70-8a91-b2c3d4e5f601")
     (tmp_path / "bad").mkdir()
     (tmp_path / "bad" / "telemetry.jsonl").write_text('{not json\n{"review_id": "x"}\n')
     ledger = _ledger(tmp_path)
@@ -796,10 +797,15 @@ def test_two_verified_digests_for_one_run_fail_closed():
             "reviewer_version": "x", "classifier_class": "green", "escalated": False,
             "blocking_reasons": [], "stale_state": "fresh", "final_status": "completed",
             "failure_mode": None, "created_at": "2026-11-01T10:00:00Z"}
-    a = {**base, "policy_bundle_digest": DIGEST_A, "policy_digest_verified": True,
-         "_decision_evidence": "verified"}
-    b = {**base, "created_at": "2026-11-01T10:01:00Z", "policy_bundle_digest": DIGEST_B,
-         "policy_digest_verified": True, "_decision_evidence": "verified"}
+    def identity(record: dict, tag: str) -> dict:
+        # The internal identity fields _run_record adds: two distinct legacy events.
+        return {**record, "_raw": {**base, "tag": tag}, "_key_kind": "legacy_content",
+                "_key_value": tag, "_event_key": "sha256:" + tag * 64, "_execution": None,
+                "_execution_key": None}
+    a = identity({**base, "policy_bundle_digest": DIGEST_A, "policy_digest_verified": True,
+                  "_decision_evidence": "verified"}, "a")
+    b = identity({**base, "created_at": "2026-11-01T10:01:00Z", "policy_bundle_digest": DIGEST_B,
+                  "policy_digest_verified": True, "_decision_evidence": "verified"}, "b")
     anomalies: list = []
     rep = q._collapse([(a, "a"), (b, "b")], anomalies)
     assert rep["policy_bundle_digest"] is None and rep["policy_digest_verified"] is False

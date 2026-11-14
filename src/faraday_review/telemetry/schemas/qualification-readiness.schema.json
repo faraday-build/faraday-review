@@ -9,6 +9,7 @@
   "$defs": {
     "class": { "enum": ["green", "yellow", "red", "block"] },
     "count": { "type": "integer", "minimum": 0 },
+    "bounds": { "type": "object", "additionalProperties": false, "required": ["min", "max"], "properties": { "min": { "type": "integer", "minimum": 0 }, "max": { "type": "integer", "minimum": 0 } } },
     "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
     "row": {
@@ -38,7 +39,7 @@
     }
   },
   "properties": {
-    "format": { "const": "faraday-review/qualification-readiness/v1" },
+    "format": { "const": "faraday-review/qualification-readiness/v2" },
     "generated_at": { "type": "string", "format": "date-time" },
     "real_pr_count": { "$ref": "#/$defs/count" },
     "counted_prs": {
@@ -152,11 +153,21 @@
         "infrastructure_failures": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["failed_runs", "failure_modes", "api_budget_exceeded_runs"],
+          "required": ["failed_runs", "failure_modes", "api_budget_exceeded_runs", "status", "bounds"],
           "properties": {
-            "failed_runs": { "$ref": "#/$defs/count" },
+            "failed_runs": { "$ref": "#/$defs/count", "description": "Distinct failed executions: known identities plus distinct legacy events (the lower bound)." },
             "failure_modes": { "type": "object", "additionalProperties": { "$ref": "#/$defs/count" } },
-            "api_budget_exceeded_runs": { "$ref": "#/$defs/count" }
+            "api_budget_exceeded_runs": { "$ref": "#/$defs/count" },
+            "status": { "enum": ["exact", "bounded"], "description": "exact: every contributing occurrence has a known execution identity. bounded: a legacy (v0.3.0 or event_id-less) occurrence contributes, so the figures are lower bounds counting distinct events and bounds gives the range." },
+            "bounds": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["failed_runs", "api_budget_exceeded_runs"],
+              "properties": {
+                "failed_runs": { "$ref": "#/$defs/bounds" },
+                "api_budget_exceeded_runs": { "$ref": "#/$defs/bounds" }
+              }
+            }
           }
         }
       }
