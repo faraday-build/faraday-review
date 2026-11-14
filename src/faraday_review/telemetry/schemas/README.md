@@ -12,6 +12,10 @@ and the bundle digest as `policy_bundle_digest`.
 
 `qualification-ledger.schema.json` is format `qualification-ledger/v2`
 (execution identity, agent-contracts v0.4.0).
+`qualification-readiness.schema.json` is format `qualification-readiness/v3`
+(gate on adjudicated qualifying real PRs; v2 criterion kept as
+`gate.superseded_criterion`). Readiness reports are derived outputs, never
+re-ingested, so no frozen v2 copy is kept.
 `qualification-ledger-v1.schema.json` is a frozen copy of v1. It is used
 only to validate a v1 ledger passed to `aggregate --prior-ledger`, and is
 never produced.

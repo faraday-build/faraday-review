@@ -60,12 +60,25 @@ def _main(argv: list[str] | None = None) -> int:
             failures.append("ledger.json")
         if readiness_path.is_file():
             ready = json.loads(readiness_path.read_text(encoding="utf-8"))
+            released = ready.get("gate", {}).get("released_policy_digests")
+            if not (isinstance(released, list) and released
+                    and all(isinstance(d, str) and d for d in released)):
+                # D9: committed readiness must enforce a non-empty released
+                # digest list (the CLI always does). A null (not enforced) or
+                # empty policy is refused by name, never replayed under the
+                # CLI default (Codex P2, #9).
+                print("reproduce: committed readiness.json gate.released_policy_digests is "
+                      f"{released!r}; a committed report must enforce a non-empty list of "
+                      "released policy digests", file=sys.stderr)
+                return 1
             rout = Path(tmp) / "readiness.json"
             argv_rdy = ["readiness", "--ledger", str(ledger_path),
                         "--synthetic", str(qual / "synthetic-prs.json"),
                         "--generated-at", str(ready.get("generated_at")),
                         "--threshold", str(ready.get("gate", {}).get("threshold")),
                         "--output", str(rout)]
+            for digest in released:
+                argv_rdy += ["--released-policy-digest", str(digest)]
             if cli(argv_rdy) != 0:
                 print("reproduce: readiness failed over the committed ledger", file=sys.stderr)
                 return 1
