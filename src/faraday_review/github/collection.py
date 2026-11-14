@@ -25,6 +25,7 @@ import json
 import os
 import re
 import zipfile
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -259,19 +260,50 @@ def _plan_artifact(client: GitHubClient, repository: str, run_id: int, artifact:
     return record
 
 
+def _complete_listing(client: GitHubClient, path: str, key: str, what: str,
+                      index: int) -> list[dict[str, Any]]:
+    """Every item of a listing, or CollectionError. A listing that returns
+    fewer distinct items than its total_count (a server-side result cap, or
+    a page that never arrived) is refused, never archived as complete
+    history (Codex r18 F2). The message names the enrollment entry index
+    only, never the repository (it may be private)."""
+    items, total = client.paginate_key_counted(path, key)
+    distinct = {int(item["id"]) for item in items}
+    if total is not None and len(distinct) < total:
+        raise CollectionError(f"enrollment entry #{index}: {what} listing truncated "
+                              f"({len(distinct)} of {total} items); nothing archived")
+    return items
+
+
+def _created_on_or_after(run: dict[str, Any], cutoff: date, index: int) -> bool:
+    try:
+        created = datetime.fromisoformat(str(run["created_at"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError) as exc:
+        raise CollectionError(f"enrollment entry #{index}: run {run.get('id')} has no valid "
+                              "created_at") from exc
+    if created.tzinfo is None:
+        raise CollectionError(f"enrollment entry #{index}: run {run.get('id')} created_at "
+                              "is not timezone-aware")
+    return created.astimezone(timezone.utc).date() >= cutoff
+
+
 def _collect_repo(client: GitHubClient, entry: dict[str, Any], visibility: str, root: Path,
-                  writes: list[tuple[Path, Path, bytes]]) -> dict[str, Any]:
+                  writes: list[tuple[Path, Path, bytes]], index: int) -> dict[str, Any]:
     repository = entry["repository"]
     workflow = entry["workflow"].rsplit("/", 1)[-1]
-    params: dict[str, Any] = {}
+    # No server-side `created` filter: GitHub caps a filtered run listing at
+    # 1,000 results, so the enrollment cutoff is applied locally to the
+    # uncapped listing (Codex r18 F2).
+    runs = _complete_listing(client, f"/repos/{repository}/actions/workflows/{workflow}/runs",
+                             "workflow_runs", "workflow run", index)
     if entry.get("enrolled_from"):
-        params["created"] = f">={entry['enrolled_from']}"
-    runs = client.paginate_key(f"/repos/{repository}/actions/workflows/{workflow}/runs",
-                               "workflow_runs", params)
+        cutoff = date.fromisoformat(entry["enrolled_from"])
+        runs = [r for r in runs if _created_on_or_after(r, cutoff, index)]
     out_runs = []
     for run in sorted(runs, key=lambda r: int(r["id"])):
-        artifacts = client.paginate_key(f"/repos/{repository}/actions/runs/{int(run['id'])}/artifacts",
-                                        "artifacts")
+        artifacts = _complete_listing(
+            client, f"/repos/{repository}/actions/runs/{int(run['id'])}/artifacts",
+            "artifacts", "artifact", index)
         records = []
         for artifact in sorted(artifacts, key=lambda a: int(a["id"])):
             record = _plan_artifact(client, repository, int(run["id"]), artifact, root, writes)
@@ -306,7 +338,7 @@ def collect(client: GitHubClient, enrollment: list[dict[str, Any]], *, public_ar
             raise CollectionError("--private-archive-dir must not overlap the public repository "
                                   "(neither inside it nor containing it)")
 
-    plan: list[tuple[dict[str, Any], str]] = []
+    plan: list[tuple[dict[str, Any], str, int]] = []
     for index, entry in enumerate(enrollment):
         observed = observed_visibility(client, entry["repository"])
         visibility = "public" if (entry["visibility"] == "public" and observed == "public") else "private"
@@ -316,15 +348,16 @@ def collect(client: GitHubClient, enrollment: list[dict[str, Any]], *, public_ar
                 f"enrollment entry #{index} is private (declared {entry['visibility']}, "
                 f"observed {observed}); refusing to write it into the public archive. "
                 "Pass --private-archive-dir outside this repository (founder decision P8).")
-        plan.append((entry, visibility))
+        plan.append((entry, visibility, index))
 
     stamp = re.sub(r"[^0-9TZ]", "", collected_at)
     per_root: dict[Path, list[dict[str, Any]]] = {}
     writes: list[tuple[Path, Path, bytes]] = []
-    for entry, visibility in plan:
+    for entry, visibility, index in plan:
         root = public_archive if visibility == "public" else private_archive
         assert root is not None
-        per_root.setdefault(root, []).append(_collect_repo(client, entry, visibility, root, writes))
+        per_root.setdefault(root, []).append(_collect_repo(client, entry, visibility, root, writes,
+                                                           index))
 
     manifests: list[tuple[Path, Path, bytes]] = []
     for root, repos in per_root.items():

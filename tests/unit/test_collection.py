@@ -52,11 +52,11 @@ class Api:
         return self
 
     def run(self, repo: str, run_id: int, *, attempt: int = 1, conclusion: str | None = "success",
-            status: str = "completed") -> "Api":
+            status: str = "completed", created_at: str = "2026-11-10T10:00:00Z") -> "Api":
         path = f"/repos/{repo}/actions/workflows/faraday-review.yml/runs"
         runs = self.routes[path][1]["workflow_runs"]
         runs.append({"id": run_id, "run_attempt": attempt, "status": status,
-                     "conclusion": conclusion, "created_at": "2026-11-10T10:00:00Z",
+                     "conclusion": conclusion, "created_at": created_at,
                      "head_sha": HEAD, "pull_requests": [{"number": 1}]})
         self.routes[path][1]["total_count"] = len(runs)
         self.routes.setdefault(f"/repos/{repo}/actions/runs/{run_id}/artifacts",
@@ -244,6 +244,39 @@ def test_unfinished_or_skipped_runs_are_not_missing_telemetry(monkeypatch, repo_
     assert "run_without_telemetry" not in _kinds(ledger)
 
 
+@pytest.mark.parametrize("status,conclusion", [("in_progress", None), ("queued", None),
+                                               ("completed", "skipped")])
+def test_later_unfinished_rerun_keeps_earlier_completed_attempt_checked(
+        monkeypatch, repo_root, status, conclusion):
+    """Codex r18 F1: a later collection that sees the rerun (attempt 2)
+    unfinished or skipped must not erase the earlier collection's proof that
+    attempt 1 completed without telemetry. Only attempt 2 is excluded."""
+    _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
+    api = Api().repo(PUB).run(PUB, 512, conclusion="failure")
+    assert _collect(monkeypatch, api, repo_root)[0] == 0
+    (run,) = api.routes[f"/repos/{PUB}/actions/workflows/faraday-review.yml/runs"][1]["workflow_runs"]
+    run.update({"run_attempt": 2, "status": status, "conclusion": conclusion})
+    assert _collect(monkeypatch, api, repo_root, "--collected-at", "2026-11-15T12:00:00Z")[0] == 0
+    assert len(list(_archive(repo_root).glob("collection-manifest-*.json"))) == 2
+    ledger = aggregate(_archive(repo_root), generated_at=TS)
+    hits = [a for a in ledger["anomalies"] if a["kind"] == "run_without_telemetry"]
+    assert hits == [{"kind": "run_without_telemetry", "repository": PUB.casefold(),
+                     "run_id": 512, "run_attempt": 1, "conclusion": "failure"}]
+
+
+def test_unfinished_rerun_still_checks_its_earlier_attempts(monkeypatch, repo_root):
+    """Codex r18 F1: GitHub reruns only a completed run, so attempts before
+    an unfinished attempt N are complete even if no earlier collection saw
+    them; only attempt N is excluded."""
+    _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
+    api = Api().repo(PUB).run(PUB, 513, attempt=3, status="in_progress", conclusion=None)
+    assert _collect(monkeypatch, api, repo_root)[0] == 0
+    ledger = aggregate(_archive(repo_root), generated_at=TS)
+    hits = [(a["run_id"], a["run_attempt"], a["conclusion"]) for a in ledger["anomalies"]
+            if a["kind"] == "run_without_telemetry"]
+    assert hits == [(513, 1, None), (513, 2, None)]
+
+
 def test_expired_unarchived_artifact_reported(monkeypatch, repo_root):
     _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
     api = Api().repo(PUB).run(PUB, 506)
@@ -323,6 +356,66 @@ def test_never_overwrites_with_different_bytes(monkeypatch, tmp_path, repo_root)
     assert not list(_archive(repo_root).glob("collection-manifest-*.json"))
     # Detected at plan time: nothing else from the run was written either.
     assert sorted(p.name for p in art.iterdir()) == ["telemetry.jsonl"]
+
+
+class _ParamSession(FakeSession):
+    def __init__(self, routes) -> None:
+        super().__init__(routes)
+        self.params: list[tuple[str, dict]] = []
+
+    def request(self, method: str, url: str, **kwargs):
+        self.params.append((url, dict(kwargs.get("params") or {})))
+        return super().request(method, url, **kwargs)
+
+
+def test_enrolled_from_cutoff_applied_locally_not_via_capped_search(monkeypatch, repo_root):
+    """Codex r18 F2: GitHub caps a `created`-filtered run listing at 1,000
+    results, so the cutoff is applied locally to the uncapped listing."""
+    _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF,
+                        "enrolled_from": "2026-11-05"})
+    api = (Api().repo(PUB)
+           .run(PUB, 530, created_at="2026-11-04T23:59:59Z")
+           .run(PUB, 531, created_at="2026-11-05T00:00:00Z")
+           .run(PUB, 532, created_at="2026-11-10T10:00:00Z"))
+    session = _ParamSession(api.routes)
+    monkeypatch.setattr(cli, "_new_session", lambda: session)
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token-not-a-secret")
+    assert cli.main(["collect", "--enrollment", str(repo_root / "docs/qualification/enrollment.json"),
+                     "--archive-dir", str(_archive(repo_root)), "--collected-at", TS]) == 0
+    listing = [p for u, p in session.params if u.endswith("/faraday-review.yml/runs")]
+    assert listing and all("created" not in p for p in listing)
+    (repo,) = _manifest(_archive(repo_root))["repositories"]
+    assert [r["run_id"] for r in repo["runs"]] == [531, 532]
+
+
+@pytest.mark.parametrize("listing", ["runs", "artifacts"])
+def test_truncated_listing_fails_closed(monkeypatch, tmp_path, repo_root, listing):
+    """Codex r18 F2: a listing that returns fewer items than its total_count
+    (a result cap, or a page that never arrived) is refused, never silently
+    archived as complete history."""
+    _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
+    api = Api().repo(PUB).run(PUB, 540)
+    api.artifact(PUB, 540, _run_files(tmp_path, "r1"))
+    path = (f"/repos/{PUB}/actions/workflows/faraday-review.yml/runs" if listing == "runs"
+            else f"/repos/{PUB}/actions/runs/540/artifacts")
+    api.routes[path][1]["total_count"] = 1500
+    code, _ = _collect(monkeypatch, api, repo_root)
+    assert code == 2
+    archive = _archive(repo_root)
+    assert not archive.exists() or not [p for p in archive.rglob("*") if p.is_file()]
+
+
+def test_truncated_private_listing_error_never_names_the_repository(monkeypatch, tmp_path,
+                                                                    repo_root, capsys):
+    _enroll(repo_root, {"repository": PRIV, "visibility": "private", "workflow": WF})
+    api = _private_fixture(tmp_path)
+    api.routes[f"/repos/{PRIV}/actions/workflows/faraday-review.yml/runs"][1]["total_count"] = 5000
+    code, _ = _collect(monkeypatch, api, repo_root,
+                       "--private-archive-dir", str(tmp_path / "operator-private-archive"))
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "truncated" in err
+    assert "secret-org" not in err and "hidden-repo" not in err
 
 
 def test_write_immutable_never_replaces_bytes(tmp_path):

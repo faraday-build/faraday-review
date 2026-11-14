@@ -61,13 +61,19 @@ cross-PR record. The durable path is:
    all-or-nothing: files are staged and hard-linked into place, and any
    failure removes everything the invocation created, so collect exits 2
    and leaves the archive unchanged. Each invocation writes
-   one immutable `collection-manifest-<stamp>.json` at the archive root. It
+   one immutable `collection-manifest-<stamp>.json` at the archive root.
+   Runs are listed without a server-side `created` filter (GitHub caps
+   filtered listings at 1,000 results); `enrolled_from` is applied locally
+   to each run's UTC `created_at` date, and a run or artifact listing that
+   returns fewer items than its `total_count` fails closed (exit 2). It
    records, per run, the id, attempt, status and conclusion, and per
    artifact the id, digest, expiry and archived files with sha256. The files
    are small JSONL/JSON and are never deleted, like the ledger.
 4. The operator runs `faraday-review aggregate --input-dir
    docs/qualification/artifacts --prior-ledger <last committed ledger>`
-   then `faraday-review readiness` (commands in `PHASE_2_INPUTS.md`). Every
+   (omitting `--prior-ledger` only for the first ledger, when none is
+   committed yet) then `faraday-review readiness` (commands in
+   `PHASE_2_INPUTS.md`). Every
    aggregation re-folds the **whole archive**, so samples from earlier
    retention windows are kept. `--prior-ledger` fails closed (exit 2) if
    any input the previous ledger recorded (matched by kind + sha256) is
