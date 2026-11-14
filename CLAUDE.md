@@ -18,7 +18,7 @@ Phase 1 is a DETERMINISTIC enforcement plane. Non-negotiable:
   same PR with the diff explained.
 - Secret values never appear in findings, evidence, telemetry, artifacts,
   logs, or comments — rule id / path / line / rule class only.
-- Contracts are vendored from agent-contracts v0.3.0; policy is pinned by
+- Contracts are vendored from agent-contracts v0.4.0; policy is pinned by
   FARADAY_POLICY_DIGEST from governance v1.1.0. Fail closed on both.
 - Every commit signed; every change lands by PR through the required
   checks (authorization-boundary, workflow-hardening, guard-self-tests,

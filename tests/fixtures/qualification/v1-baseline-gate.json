@@ -1,0 +1,261 @@
+{
+  "gate_view": {
+    "adjudicated_count": 2,
+    "agreement": {
+      "agree": 0,
+      "agreement_rate": 0.0,
+      "compared": 2,
+      "confusion_matrix": {
+        "block": {
+          "block": 0,
+          "green": 0,
+          "red": 0,
+          "yellow": 0
+        },
+        "green": {
+          "block": 0,
+          "green": 0,
+          "red": 0,
+          "yellow": 0
+        },
+        "red": {
+          "block": 0,
+          "green": 0,
+          "red": 0,
+          "yellow": 0
+        },
+        "yellow": {
+          "block": 0,
+          "green": 1,
+          "red": 1,
+          "yellow": 0
+        }
+      },
+      "direction": {
+        "over_escalation": 1,
+        "under_escalation": 1
+      },
+      "disagree": 2,
+      "disagreements": [
+        {
+          "classifier_class": "yellow",
+          "direction": "over_escalation",
+          "founder_classification": "green",
+          "head_sha": "ac4ae97285c19b13201deb9b192d921316db3447",
+          "pr_number": 1,
+          "repository": "faraday-build/pilot"
+        },
+        {
+          "classifier_class": "yellow",
+          "direction": "under_escalation",
+          "founder_classification": "red",
+          "head_sha": "bf1c365741a4bfb5fee5c3150335ab4f867a4d9a",
+          "pr_number": 2,
+          "repository": "faraday-build/pilot"
+        }
+      ]
+    },
+    "counted_prs": [
+      {
+        "adjudicated": true,
+        "classifier_class": "yellow",
+        "head_sha": "ac4ae97285c19b13201deb9b192d921316db3447",
+        "pr_number": 1,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-1-ac4ae97285c1"
+      },
+      {
+        "adjudicated": true,
+        "classifier_class": "yellow",
+        "head_sha": "bf1c365741a4bfb5fee5c3150335ab4f867a4d9a",
+        "pr_number": 2,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-2-bf1c365741a4"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "8dbc6058e03353809813416c6830708abaf9d223",
+        "pr_number": 3,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-3-8dbc6058e033"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "b9f1f9d00f81776b624e4923593d8149cd572c90",
+        "pr_number": 4,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-4-b9f1f9d00f81"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "36e20656918e0a9ee13c113115a777c6c365d358",
+        "pr_number": 5,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-5-36e20656918e"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "6b7658601d2015ceada87ba07dd284ebc04d4a20",
+        "pr_number": 6,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-6-6b7658601d20"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "d1f3449e3d922da3eed18a6b1e102e4383b266e2",
+        "pr_number": 7,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-7-d1f3449e3d92"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "8d49cac29406836eeb1d669935e82ead06fdd7d1",
+        "pr_number": 8,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-8-8d49cac29406"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "bcb82670ca693a54e8feb7eceb43f69f70f3150b",
+        "pr_number": 9,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-9-bcb82670ca69"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "b49a2c3c89cc9f7baf082c48c229a1970aa83a85",
+        "pr_number": 10,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-10-b49a2c3c89cc"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "52c8c47ce5db9d58a0fa12b25f95be7b4750b487",
+        "pr_number": 11,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-11-52c8c47ce5db"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "84cd76513de50deb25c27159983d6d650c7cf4b8",
+        "pr_number": 12,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-12-84cd76513de5"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "086a439b1e9c9cf79e093af45e3583dc17acad0d",
+        "pr_number": 13,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-13-086a439b1e9c"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "78e94b74dd6e090aaa832e539f1372a8ff75689d",
+        "pr_number": 14,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-14-78e94b74dd6e"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "870e9b927df698094d58986266b1ed1ef1876f1e",
+        "pr_number": 15,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-15-870e9b927df6"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "fa84a7474b87e67d7235920d993ac5d03009ced8",
+        "pr_number": 16,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-16-fa84a7474b87"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "04387345788dfee433549dbed0964f5bfbebbca1",
+        "pr_number": 17,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-17-04387345788d"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "d0ce4623149003e34aa4b75281ee2f95082cafd2",
+        "pr_number": 18,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-18-d0ce46231490"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "08b7527bcc4770b173e98ee485c0a3e2194f8466",
+        "pr_number": 19,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-19-08b7527bcc47"
+      },
+      {
+        "adjudicated": false,
+        "classifier_class": "yellow",
+        "head_sha": "b28243ed7219e194772742b54607f812255673df",
+        "pr_number": 20,
+        "repository": "faraday-build/pilot",
+        "review_id": "frr-faraday-build-pilot-20-b28243ed7219"
+      }
+    ],
+    "escalation": {
+      "api_budget_exceeded_escalations": 0,
+      "classifier_class_distribution": {
+        "block": 0,
+        "green": 0,
+        "red": 0,
+        "yellow": 20
+      },
+      "escalated_count": 20,
+      "pr_too_large_escalations": 0
+    },
+    "gate": {
+      "criterion": "real_pr_count >= threshold",
+      "met": true,
+      "threshold": 20
+    },
+    "real_pr_count": 20,
+    "synthetic_excluded": [
+      {
+        "pr_number": 21,
+        "present_in_ledger": true,
+        "reason": "seeded",
+        "repository": "faraday-build/pilot"
+      }
+    ]
+  },
+  "infrastructure_failures": {
+    "api_budget_exceeded_runs": 1,
+    "failed_runs": 2,
+    "failure_modes": {
+      "runner_lost": 2
+    }
+  },
+  "ledger_counts": {
+    "duplicates_collapsed": 5,
+    "entries": 24,
+    "events_read": 29,
+    "runs_after_dedup": 24,
+    "superseded_entries": 2
+  },
+  "produced_by": "faraday-review e9fb136 consumer (qualification-ledger/v1; identical to 8088813)"
+}

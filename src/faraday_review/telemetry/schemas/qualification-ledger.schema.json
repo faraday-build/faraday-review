@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/local/qualification-ledger.schema.json",
+  "title": "QualificationLedger",
+  "description": "Output of `faraday-review aggregate`: every shadow run and founder adjudication from downloaded run artifacts, deduplicated and correlated by (repository, pr_number, head_sha, policy_bundle_digest). Deterministic for identical inputs and --generated-at. v2 (agent-contracts v0.4.0): event and execution identity per review-telemetry-identity.md C1-C9; execution counts are exact only when every event carries event_id, otherwise null with bounds.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "generated_at", "founder_node_id", "inputs", "entries", "adjudications", "counts", "anomalies"],
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "class": { "enum": ["green", "yellow", "red", "block"] },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "anomaly": { "type": "object", "required": ["kind"], "properties": { "kind": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" } } },
+    "adjudication": { "$ref": "founder-adjudication-record.schema.json" },
+    "bounds": { "type": "object", "additionalProperties": false, "required": ["min", "max"], "properties": { "min": { "type": "integer", "minimum": 0 }, "max": { "type": "integer", "minimum": 0 } } },
+    "execution": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "additionalProperties": false, "required": ["provider", "run_id", "run_attempt"], "properties": { "provider": { "enum": ["github_actions"] }, "run_id": { "type": "integer", "minimum": 1 }, "run_attempt": { "type": "integer", "minimum": 1 } } }
+      ]
+    },
+    "occurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_sha256", "created_at", "final_status", "failure_mode", "stale_state", "classifier_class", "blocking_reasons", "budget_exhausted", "policy_digest_verified", "copies", "sources", "event_key", "event_key_kind", "execution", "execution_key", "eligible"],
+      "properties": {
+        "event_sha256": { "$ref": "#/$defs/digest", "description": "sha256 of the canonical form of the full validated telemetry record (v1: of a reduced projection)." },
+        "created_at": { "type": "string", "format": "date-time" },
+        "final_status": { "enum": ["completed", "failed"] },
+        "failure_mode": { "type": ["string", "null"] },
+        "stale_state": { "type": ["string", "null"] },
+        "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] },
+        "blocking_reasons": { "type": "array", "items": { "type": "string" } },
+        "budget_exhausted": { "type": "boolean" },
+        "policy_digest_verified": { "type": "boolean", "description": "Some copy of this occurrence carried a decision.json whose digest reproduces the fingerprint." },
+        "copies": { "type": "integer", "minimum": 1 },
+        "sources": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "event_key": { "$ref": "#/$defs/digest", "description": "sha256 over the C2 event key: event_id when present, otherwise the content key over the full record. Copies of one event share it." },
+        "event_key_kind": { "enum": ["event_id", "legacy_content"] },
+        "execution": { "$ref": "#/$defs/execution", "description": "The record's execution object, verbatim, or null." },
+        "execution_key": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }], "description": "sha256 over the execution identity: (provider, casefolded repository, run_id, run_attempt), or the event itself when only event_id is present. null for a legacy record: unknown, never synthesized (C8)." },
+        "eligible": { "type": "boolean", "description": "false when the event is excluded by an event_id conflict (C4). An ineligible occurrence never counts, never selects a head and contributes no policy evidence or infrastructure tally." }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_id", "fingerprint", "repository", "pr_number", "base_sha", "head_sha", "reviewer_version", "policy_bundle_digest", "policy_digest_verified", "classifier_class", "escalated", "blocking_reasons", "stale_state", "final_status", "failure_mode", "created_at", "first_created_at", "last_created_at", "last_fresh_created_at", "occurrence_stale_states", "occurrence_final_statuses", "occurrence_failure_modes", "occurrence_budget_exhausted", "last_eligible_created_at", "occurrence_log", "occurrences", "distinct_payloads", "sources", "executions_exact", "execution_count", "execution_count_bounds"],
+      "properties": {
+        "review_id": { "type": "string" },
+        "fingerprint": { "$ref": "#/$defs/digest" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "pr_number": { "type": "integer", "minimum": 1 },
+        "base_sha": { "$ref": "#/$defs/sha" },
+        "head_sha": { "$ref": "#/$defs/sha" },
+        "reviewer_version": { "type": ["string", "null"] },
+        "policy_bundle_digest": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+        "policy_digest_verified": { "type": "boolean" },
+        "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] },
+        "escalated": { "type": "boolean" },
+        "blocking_reasons": { "type": "array", "items": { "type": "string" } },
+        "stale_state": { "type": ["string", "null"] },
+        "final_status": { "enum": ["completed", "failed"] },
+        "failure_mode": { "type": ["string", "null"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "first_created_at": { "type": "string", "format": "date-time" },
+        "last_created_at": { "type": "string", "format": "date-time" },
+        "occurrence_stale_states": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "occurrence_final_statuses": { "type": "object", "propertyNames": { "enum": ["completed", "failed"] }, "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "occurrence_failure_modes": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "occurrence_budget_exhausted": { "type": "integer", "minimum": 0, "description": "Distinct occurrences that exhausted the GitHub API budget (blocking reason or failure mode github_api_budget_exceeded)." },
+        "occurrence_log": {
+          "description": "Every distinct execution occurrence of this run (copies of the same event are one occurrence), in created_at order. Infrastructure health is derived from this log, never from the representative.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/occurrence" }
+        },
+        "last_eligible_created_at": {
+          "description": "Newest created_at among occurrences that are completed AND fresh; null if none. Only this timestamp can make a head current.",
+          "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+        },
+        "last_fresh_created_at": {
+          "description": "Newest created_at among occurrences with stale_state 'fresh' (completed or failed); null if none. Evidence only: head selection uses last_eligible_created_at.",
+          "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+        },
+        "occurrences": { "type": "integer", "minimum": 1 },
+        "distinct_payloads": { "type": "integer", "minimum": 1 },
+        "sources": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "executions_exact": { "type": "integer", "minimum": 0, "description": "Distinct known execution identities among eligible occurrences." },
+        "execution_count": { "type": ["integer", "null"], "minimum": 0, "description": "executions_exact when no legacy occurrence is present, else null (C8)." },
+        "execution_count_bounds": { "$ref": "#/$defs/bounds" }
+      }
+    }
+  },
+  "properties": {
+    "format": { "const": "faraday-review/qualification-ledger/v2" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "founder_node_id": { "type": "string", "minLength": 1 },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "kind", "sha256"],
+        "properties": {
+          "path": { "type": "string" },
+          "kind": { "enum": ["telemetry", "adjudications", "decision", "run_binding"] },
+          "sha256": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "repository_spellings", "pr_number", "head_sha", "policy_bundle_digest", "current", "superseded", "runs", "founder_adjudication"],
+        "properties": {
+          "repository": {
+            "description": "Normalized (casefolded) repository identity used for every comparison.",
+            "type": "string", "pattern": "^[a-z0-9_.-]+/[a-z0-9_.-]+$"
+          },
+          "repository_spellings": {
+            "description": "Original repository spellings seen in telemetry for this entry.",
+            "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/repository" }
+          },
+          "pr_number": { "type": "integer", "minimum": 1 },
+          "head_sha": { "$ref": "#/$defs/sha" },
+          "policy_bundle_digest": { "oneOf": [{ "$ref": "#/$defs/digest" }, { "type": "null" }] },
+          "current": { "type": "boolean", "description": "This head is the PR's current head (selected from completed-and-fresh occurrences only)." },
+          "superseded": { "type": "boolean", "description": "Another head of this PR is current. Both false: the PR has no completed-and-fresh occurrence." },
+          "runs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/run" } },
+          "founder_adjudication": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["founder_classification", "labeled_at", "label", "actor", "accepted_records"],
+                "properties": {
+                  "founder_classification": { "$ref": "#/$defs/class" },
+                  "labeled_at": { "type": "string", "format": "date-time" },
+                  "label": { "type": "string" },
+                  "actor": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["node_id", "login"],
+                    "properties": { "node_id": { "type": "string" }, "login": { "type": "string" } }
+                  },
+                  "accepted_records": { "type": "integer", "minimum": 1 }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "adjudications": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted_count", "rejected_count", "rejected", "unmatched"],
+      "properties": {
+        "accepted_count": { "type": "integer", "minimum": 0 },
+        "rejected_count": { "type": "integer", "minimum": 0 },
+        "rejected": { "type": "array", "items": { "$ref": "#/$defs/adjudication" } },
+        "unmatched": { "type": "array", "items": { "$ref": "#/$defs/adjudication" } }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events_read", "runs_after_dedup", "duplicates_collapsed", "entries", "superseded_entries", "identity"],
+      "properties": {
+        "events_read": { "type": "integer", "minimum": 0 },
+        "runs_after_dedup": { "type": "integer", "minimum": 0 },
+        "duplicates_collapsed": { "type": "integer", "minimum": 0 },
+        "entries": { "type": "integer", "minimum": 0 },
+        "superseded_entries": { "type": "integer", "minimum": 0 },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Set-level identity figures over every input copy (C1-C8). Directly comparable with the agent-contracts conformance vectors.",
+          "required": ["events", "executions_exact", "execution_count", "execution_count_bounds", "legacy_events", "legacy_copies", "event_id_conflicts", "invalid_events"],
+          "properties": {
+            "events": { "type": "integer", "minimum": 0 },
+            "executions_exact": { "type": "integer", "minimum": 0 },
+            "execution_count": { "type": ["integer", "null"], "minimum": 0 },
+            "execution_count_bounds": { "$ref": "#/$defs/bounds" },
+            "legacy_events": { "type": "integer", "minimum": 0 },
+            "legacy_copies": { "type": "integer", "minimum": 0 },
+            "event_id_conflicts": { "type": "integer", "minimum": 0 },
+            "invalid_events": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "anomalies": { "type": "array", "items": { "$ref": "#/$defs/anomaly" } }
+  }
+}

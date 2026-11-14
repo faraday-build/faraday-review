@@ -46,4 +46,30 @@ gh api -X POST repos/faraday-build/faraday-review/rulesets --input ruleset.json
 ## Telemetry
 
 `artifacts/reviews/telemetry.jsonl` is append-only run data. Never delete
-during rollback — it is the Phase 2 calibration input.
+during rollback — it is the Phase 2 calibration input. The aggregated
+qualification ledger and readiness report committed under
+`docs/qualification/` are the durable record and are likewise never
+deleted during rollback (retention rules: `OPERATING_MODEL.md`).
+
+### Execution identity (agent-contracts v0.4.0)
+
+The producer and consumer landed as separate commits so that the producer
+can be reverted alone.
+
+- **Producer only (always safe):** revert the producer commit ("emit v0.4.0
+  event_id and execution from shadow-run"). Shadow runs stop emitting
+  identity. The consumer still reads v0.3.0 and v0.4.0 records.
+- **Consumer:** never roll the consumer back below v0.4.0 acceptance while
+  any v0.4.0 record is archived. A v0.3.0-only consumer rejects those
+  records (`additionalProperties: false`), so their samples would drop out
+  of the count silently. `--prior-ledger` checks inputs, not records, so it
+  would not catch that. Check first:
+
+  ```bash
+  grep -rl '"event_id"' docs/qualification/artifacts   # any hit: keep the consumer
+  ```
+
+  A full revert (re-vendor, consumer, producer, docs) is allowed only when
+  that command finds nothing.
+- **Contract:** agent-contracts releases are append-only. Never delete or
+  retag v0.4.0; a defect is fixed by v0.4.1.

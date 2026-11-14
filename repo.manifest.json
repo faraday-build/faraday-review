@@ -7,7 +7,7 @@
   "domain": "governance",
   "purpose": "Deterministic PR enforcement plane: exact-SHA freshness, pinned policy digest verification, protected-path classification, required-check verification, secret detection, deterministic evaluate-pr, founder escalation, shadow telemetry. No model inference in Phase 1.",
   "dependencies": [
-    "tomrivera-ops/agent-contracts@v0.3.0",
+    "tomrivera-ops/agent-contracts@v0.4.0",
     "faraday-capital-systems/faraday-governance@v1.1.0"
   ],
   "allowed_agent_actions": [
