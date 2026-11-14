@@ -20,10 +20,16 @@ No shadow telemetry has been aggregated yet; nothing above is estimated.
 How the number is computed (no network, deterministic, explicit timestamp):
 
 ```bash
-# 1. download every shadow-run artifact into one directory, e.g. qual-in/
-#    (gh run download … — one sub-directory per run is fine)
-# 2. fold them into one ledger
-faraday-review aggregate --input-dir qual-in/ \
+# 1. archive every enrolled repo's shadow-run artifacts (read-only API)
+faraday-review collect --collected-at 2026-11-12T00:00:00Z
+# 2a. FIRST ledger only (no docs/qualification/ledger.json committed yet):
+#     fold the whole archive into one ledger, without --prior-ledger
+faraday-review aggregate --input-dir docs/qualification/artifacts \
+  --output docs/qualification/ledger.json --generated-at 2026-11-12T00:00:00Z
+# 2b. every LATER update: the last committed ledger is the prior ledger, so
+#     an input it recorded can never silently disappear (fails closed, exit 2)
+faraday-review aggregate --input-dir docs/qualification/artifacts \
+  --prior-ledger docs/qualification/ledger.json \
   --output docs/qualification/ledger.json --generated-at 2026-11-12T00:00:00Z
 # 3. derive the gate report
 faraday-review readiness --ledger docs/qualification/ledger.json \
