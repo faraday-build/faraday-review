@@ -168,3 +168,32 @@ def test_hardening_guard_passes():
         cwd=ROOT, capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_failure_telemetry_recorded_when_review_step_leaves_none():
+    """GHO-004 P1: if the review step dies before writing telemetry (crash,
+    kill, timeout, cancellation), a later always() step records one failed
+    event through the reviewer CLI. It runs only when the reviewer was
+    installed, before the evidence upload, with platform identity only."""
+    steps = _steps()
+    review = steps[_index("Shadow review")]
+    install = steps[_index("Install reviewer")]
+    record = steps[_index("Record failure telemetry")]
+    assert _index("Shadow review") < _index("Record failure telemetry") < _index("Upload shadow evidence")
+    assert install["id"] == "install" and review["id"] == "shadow"
+    assert record["if"] == "always() && steps.install.outcome == 'success'"
+    env = record["env"]
+    assert env["SHADOW_OUTCOME"] == "${{ steps.shadow.outcome }}"
+    assert env["RUN_ID"] == "${{ github.run_id }}"
+    assert env["RUN_ATTEMPT"] == "${{ github.run_attempt }}"
+    assert env["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert env["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    run = record["run"]
+    assert "faraday-review record-failure" in run
+    assert '--run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"' in run
+    assert "workflow_step_cancelled" in run and "workflow_step_failed" in run
+    # The review step hands the payload SHAs to the CLI as a fallback
+    # identity for its own failure record.
+    assert review["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert review["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert '--head-sha "$HEAD_SHA" --base-sha "$BASE_SHA"' in review["run"]

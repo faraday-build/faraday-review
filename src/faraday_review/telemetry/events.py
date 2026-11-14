@@ -36,7 +36,7 @@ def build_run_event(
     fingerprint: str,
     decision: dict[str, Any],
     finding_counts: dict[str, int],
-    stale_state: str,
+    stale_state: str | None,
     duration_seconds: float,
     github_requests_used: int,
     retries: int,
@@ -62,7 +62,6 @@ def build_run_event(
                 "warning": int(finding_counts.get("warning", 0)),
                 "blocking": int(finding_counts.get("blocking", 0)),
             },
-            "stale_state": stale_state,
             "duration_seconds": duration_seconds,
             "github_requests_used": github_requests_used,
             "retries": retries,
@@ -70,6 +69,9 @@ def build_run_event(
             "created_at": created_at,
         }
     )
+    if stale_state is not None:
+        # None: the run ended before either freshness gate ran (P1).
+        event["stale_state"] = stale_state
     if failure_mode is not None:
         event["failure_mode"] = failure_mode
     if event_id is not None:

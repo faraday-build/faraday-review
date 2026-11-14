@@ -84,6 +84,33 @@ such inputs and requires none.
 The real-PR gate threshold has a hard floor of 20; `readiness` exits 2 on
 any lower value.
 
+### Failed runs leave telemetry
+
+A shadow run that ends early still writes exactly one v0.4.0 record with
+`final_status: failed`, a fresh `event_id`, the platform `execution` and a
+`failure_mode`, then exits 2 as before. The contract fixes only the
+`failure_mode` pattern; the producer emits:
+
+| `failure_mode` | Cause |
+|---|---|
+| `github_api_budget_exceeded` | API budget exhausted (counts in `api_budget_exceeded_runs`) |
+| `github_api_failure`, `configuration_invalid`, `publication_failure`, … | the `reason` of the typed `FaradayReviewError` |
+| `gitleaks_error` | gitleaks exited outside {0, 2}, was missing, or timed out |
+| `github_token_missing` | no token in the configured env var |
+| `internal_error` | any other exception |
+| `workflow_step_failed`, `workflow_step_cancelled` | the review step died without writing telemetry; recorded by the `Record failure telemetry` workflow step (`faraday-review record-failure`, no network, a no-op when telemetry exists) |
+
+Authorization fields are copied verbatim from `decision.json` when the
+Validator ran. Otherwise they are the fail-closed posture from
+`governance.authorization.failed_run_posture()` (approval and merge
+`false`, `founder_review_required: true`, no `risk_class`). Head and base
+come from the decision, then the collected context, then the event payload
+(`--head-sha`/`--base-sha`, used only for this record). With none of them
+no schema-valid record exists, and the run writes nothing but still exits 2.
+`stale_state` is omitted when no freshness gate ran. Failures before the
+reviewer is installed (binding, checkout, install) cannot run reviewer code
+and leave only `run-binding.json`.
+
 ## Hard rules
 
 - No bypassing protections; stop gates are diagnosed, never routed around.
