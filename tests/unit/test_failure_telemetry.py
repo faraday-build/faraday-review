@@ -344,3 +344,110 @@ def test_failed_then_completed_run_keeps_the_failure(offline, tmp_path, monkeypa
     assert infra["failed_runs"] == 1
     assert infra["failure_modes"] == {"gitleaks_error": 1}
     assert ready["real_pr_count"] == 1
+
+
+# ------------------------------------------------------------ Codex round 1 (f58cd77)
+
+
+LONG_REPO = "faraday-capital-systems/faraday-architecture-registry"
+
+
+def test_review_id_bounded_for_long_repository_names(tmp_path):
+    """Codex P2 #8 cli.py:204: the review_id must fit the schema for every
+    valid repository name, or the failure record is dropped."""
+    out = tmp_path / "a"
+    assert cli.main(["record-failure", "--repository", LONG_REPO, "--pr", "1234567",
+                     "--head-sha", HEAD, "--base-sha", BASE, "--run-id", "1",
+                     "--run-attempt", "1", "--failure-mode", "workflow_step_failed",
+                     "--artifacts-dir", str(out)]) == 0
+    (event,) = _lines(out)
+    assert validation_errors("review-telemetry-event", event) == []
+    assert len(event["review_id"]) <= 64
+
+
+def test_review_id_short_form_unchanged_and_long_form_distinct():
+    assert cli._review_id("faraday-build/pilot", 7, HEAD) == f"frr-faraday-build-pilot-7-{HEAD[:12]}"
+    a = cli._review_id(LONG_REPO, 7, HEAD)
+    b = cli._review_id(LONG_REPO + "s", 7, HEAD)
+    c = cli._review_id(LONG_REPO, 8, HEAD)
+    assert len({a, b, c}) == 3
+    assert all(len(x) <= 64 for x in (a, b, c))
+    assert a == cli._review_id(LONG_REPO, 7, HEAD)
+
+
+def test_completed_run_with_long_repository_is_schema_valid(offline, tmp_path, monkeypatch):
+    ctx = offline["context"]
+    raw = json.loads((GOLDEN / "context.json").read_text(encoding="utf-8"))
+    raw["contract_version"] = "v0.4.0"
+    raw["repository"] = LONG_REPO
+    long_ctx = PullRequestContext.from_json(raw)
+    monkeypatch.setattr(cli, "collect_context", lambda *a, **k: long_ctx)
+    out = tmp_path / "a"
+    assert cli.main(["shadow-run", "--repository", LONG_REPO, "--pr", str(offline["pr"]),
+                     "--policy-bundle", str(offline["bundle"]),
+                     "--expected-policy-digest", offline["digest"],
+                     "--artifacts-dir", str(out), "--skip-publish"]) == 0
+    (event,) = _lines(out)
+    assert validation_errors("review-telemetry-event", event) == []
+    assert ctx.head_sha == event["head_sha"]
+
+
+def test_record_failure_copies_an_existing_decision(offline, tmp_path, monkeypatch):
+    """Codex P2 #8 cli.py:360: a step killed after decision.json was written
+    must still carry the Validator's fields verbatim."""
+    def boom(*a, **k):
+        raise PublicationError("killed mid-publication")
+    monkeypatch.setattr(cli, "publish_check_run", boom)
+    out = tmp_path / "a"
+    assert _shadow(offline, out, publish=True) == 2
+    decision = json.loads((out / "decision.json").read_text())
+    (out / "telemetry.jsonl").unlink()  # as if the process died before appending
+    assert cli.main(["record-failure", "--repository", offline["repo"], "--pr", str(offline["pr"]),
+                     "--head-sha", HEAD, "--base-sha", BASE, "--run-id", "43507102983",
+                     "--run-attempt", "2", "--failure-mode", "workflow_step_cancelled",
+                     "--artifacts-dir", str(out)]) == 0
+    (event,) = _lines(out)
+    assert validation_errors("review-telemetry-event", event) == []
+    for key in ("contract_version", "risk_class", "approval_authorized", "merge_authorized",
+                "founder_review_required", "blocking_reasons", "head_sha", "base_sha"):
+        assert event[key] == decision[key], key
+    assert event["failure_mode"] == "workflow_step_cancelled"
+
+
+@pytest.mark.parametrize("tamper", [{"repository": "other/repo"}, {"pr_number": 999},
+                                    "not-json", {"head_sha": "zz"}])
+def test_record_failure_ignores_a_foreign_or_broken_decision(tmp_path, tamper):
+    out = tmp_path / "a"
+    out.mkdir()
+    decision = {"repository": "faraday-build/pilot", "pr_number": 7, "head_sha": HEAD,
+                "base_sha": BASE, "risk_class": "green", "approval_authorized": False,
+                "merge_authorized": False, "founder_review_required": False,
+                "contract_version": "v0.4.0", "blocking_reasons": []}
+    if isinstance(tamper, dict):
+        decision.update(tamper)
+        (out / "decision.json").write_text(json.dumps(decision))
+    else:
+        (out / "decision.json").write_text(tamper)
+    assert _record(out, "--failure-mode", "workflow_step_failed") == 0
+    (event,) = _lines(out)
+    _assert_failed(event, "workflow_step_failed", head=HEAD, base=BASE)
+    assert "risk_class" not in event
+
+
+def test_decision_captured_before_outputs_are_written(offline, tmp_path, monkeypatch):
+    """Codex P2 #8 cli.py:320: a failure while writing the Validator's
+    outputs must still copy the decision it produced."""
+    real = cli.write_canonical
+
+    def flaky(path, obj):
+        if Path(path).name == "merge-authorization.json":
+            raise OSError("disk full")
+        return real(path, obj)
+    monkeypatch.setattr(cli, "write_canonical", flaky)
+    out = tmp_path / "a"
+    assert _shadow(offline, out) == 2
+    (event,) = _lines(out)
+    decision = json.loads((out / "decision.json").read_text())
+    assert event["failure_mode"] == "internal_error"
+    for key in ("risk_class", "blocking_reasons", "founder_review_required"):
+        assert event[key] == decision[key], key

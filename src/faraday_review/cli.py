@@ -11,6 +11,7 @@ no decision document could be produced.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -64,6 +65,20 @@ def _new_event_id() -> str:
     """P2: a fresh UUIDv4 per emission, never derived from content. Module
     level so tests can pin it."""
     return str(uuid.uuid4())
+
+
+_REVIEW_ID_MAX = 64  # review-telemetry-event review_id: 8..64 characters
+
+
+def _review_id(repository: str, pr: int, head_sha: str) -> str:
+    """The review subject id. The readable form is kept whenever it fits the
+    schema; a longer one becomes a bounded digest form that is still unique
+    per (repository, PR, head) (Codex P2, #8)."""
+    readable = f"frr-{repository.replace('/', '-')}-{pr}-{head_sha[:12]}"
+    if len(readable) <= _REVIEW_ID_MAX:
+        return readable
+    subject = hashlib.sha256(f"{repository}#{pr}@{head_sha}".encode("utf-8")).hexdigest()
+    return f"frr-{pr}-{head_sha[:12]}-{subject[:24]}"
 
 
 def _positive_int(value: str) -> int:
@@ -201,7 +216,7 @@ class _ShadowRun:
                         "reviewer_version": REVIEWER_VERSION}
         budget = self.budget
         event = build_run_event(
-            review_id=f"frr-{args.repository.replace('/', '-')}-{args.pr}-{decision['head_sha'][:12]}",
+            review_id=_review_id(args.repository, args.pr, decision["head_sha"]),
             fingerprint=run_fingerprint(
                 args.repository, args.pr, decision["base_sha"], decision["head_sha"],
                 decision.get("policy_digest"), REVIEWER_VERSION,
@@ -315,9 +330,11 @@ def _cmd_shadow_run(args, run: _ShadowRun) -> int:
         digest_source=source,
         infrastructure_failure=infrastructure_failure,
     )
-    _write_outputs_shadow(result, artifacts)
     decision = result.decision
+    # Captured before anything is written, so a failure while writing the
+    # outputs still copies the Validator's decision (Codex P2, #8).
     run.decision = decision
+    _write_outputs_shadow(result, artifacts)
 
     # Freshness gate 2: before publication.
     try:
@@ -340,6 +357,23 @@ def _cmd_shadow_run(args, run: _ShadowRun) -> int:
     return 0
 
 
+def _own_decision(path: Path, args) -> dict | None:
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        decision = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(decision, dict):
+        return None
+    if decision.get("repository") != args.repository or decision.get("pr_number") != args.pr:
+        return None
+    if not all(isinstance(decision.get(k), str) and _SHA_RE.match(decision[k])
+               for k in ("head_sha", "base_sha")):
+        return None
+    return decision
+
+
 def _cmd_record_failure(args) -> int:
     """Workflow-level failure record (GHO-004 P1): the review step ended
     without writing telemetry (killed, timed out, cancelled, or crashed
@@ -357,6 +391,11 @@ def _cmd_record_failure(args) -> int:
         return 0
     artifacts.mkdir(parents=True, exist_ok=True)
     run = _ShadowRun(args)
+    # The step may have died after the Validator wrote decision.json (e.g.
+    # during publication): copy that decision verbatim, as shadow-run would
+    # have (Codex P2, #8). A foreign or unreadable one is ignored and the
+    # fail-closed posture is used.
+    run.decision = _own_decision(artifacts / "decision.json", args)
     if not run.emit(final_status="failed", failure_mode=args.failure_mode):
         return 2
     print(f"record-failure: failure_mode={args.failure_mode} -> {telemetry}", file=sys.stderr)
