@@ -21,6 +21,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from . import REVIEWER_VERSION
 from .canonical import write_canonical
@@ -360,7 +361,9 @@ def _cmd_shadow_run(args, run: _ShadowRun) -> int:
     return 0
 
 
-def _own_decision(path: Path, args) -> dict | None:
+def _own_document(path: Path, args) -> dict | None:
+    """This run's own decision.json / pr-context.json, or None when it is
+    absent, a symlink, unreadable, foreign, or lacks well-formed SHAs."""
     if not path.is_file() or path.is_symlink():
         return None
     try:
@@ -375,6 +378,17 @@ def _own_decision(path: Path, args) -> dict | None:
                for k in ("head_sha", "base_sha")):
         return None
     return decision
+
+
+def _own_decision(path: Path, args) -> dict | None:
+    return _own_document(path, args)
+
+
+def _own_context(path: Path, args) -> SimpleNamespace | None:
+    doc = _own_document(path, args)
+    if doc is None:
+        return None
+    return SimpleNamespace(head_sha=doc["head_sha"], base_sha=doc["base_sha"])
 
 
 def _cmd_record_failure(args) -> int:
@@ -399,6 +413,10 @@ def _cmd_record_failure(args) -> int:
     # have (Codex P2, #8). A foreign or unreadable one is ignored and the
     # fail-closed posture is used.
     run.decision = _own_decision(artifacts / "decision.json", args)
+    # Killed after pr-context.json but before decision.json: keep the
+    # decision -> context -> payload identity precedence (Codex P2, #8 r3).
+    if run.decision is None:
+        run.context = _own_context(artifacts / "pr-context.json", args)
     if not run.emit(final_status="failed", failure_mode=args.failure_mode):
         return 2
     print(f"record-failure: failure_mode={args.failure_mode} -> {telemetry}", file=sys.stderr)
