@@ -184,3 +184,24 @@ def test_every_gap_listed_at_once(monkeypatch, capsys):
 def test_invalid_repo_argument(monkeypatch, capsys):
     monkeypatch.setenv("GITHUB_TOKEN", "t")
     assert cli.main(["preflight", "--repo", "not a repo"]) == 2
+
+
+def test_unknown_enable_variable_is_a_gap(monkeypatch, capsys):
+    """Codex P2 #10 preflight.py:180: a known disabled value is not gating,
+    an unreadable one is."""
+    code, report, _ = _preflight(monkeypatch, capsys, _routes(**{
+        f"/repos/{REPO}/actions/variables/FARADAY_REVIEW_SHADOW_ENABLED": (403, {"message": "no"})}))
+    assert code == 1
+    assert report["enable_variable"]["status"] == "unknown"
+    assert any(ENABLE in g for g in report["gaps"])
+
+
+def test_absent_enable_variable_is_reported_not_gating(monkeypatch, capsys):
+    routes = _routes()
+    del routes[f"/repos/{REPO}/actions/variables/FARADAY_REVIEW_SHADOW_ENABLED"]
+    code, report, _ = _preflight(monkeypatch, capsys, routes)
+    assert code == 0, report
+    assert report["enable_variable"]["status"] == "absent"
+
+
+ENABLE = "FARADAY_REVIEW_SHADOW_ENABLED"

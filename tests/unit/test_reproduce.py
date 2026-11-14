@@ -101,3 +101,17 @@ def test_prior_ledger_continuity_enforced(tmp_path):
                            "--prior-ledger", str(prior)], capture_output=True, text=True)
     assert proc.returncode == 1
     assert "missing" in proc.stderr
+
+
+def test_deleted_ledger_with_prior_ledger_fails(tmp_path):
+    """Codex P2 #10 reproduce.py:36: removing ledger, readiness and archive
+    together must not pass vacuously when the base branch had a ledger."""
+    _commit_ledger(tmp_path)
+    prior = tmp_path.parent / f"{tmp_path.name}-base-ledger.json"
+    prior.write_bytes((tmp_path / "ledger.json").read_bytes())
+    (tmp_path / "ledger.json").unlink()
+    (tmp_path / "readiness.json").unlink()
+    proc = subprocess.run([sys.executable, str(SCRIPT), "--qualification-dir", str(tmp_path),
+                           "--prior-ledger", str(prior)], capture_output=True, text=True)
+    assert proc.returncode == 1
+    assert "prior ledger" in proc.stderr

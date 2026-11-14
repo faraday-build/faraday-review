@@ -55,7 +55,10 @@ cross-PR record. The durable path is:
    `docs/qualification/artifacts/<owner>/<repo>/<run id>/<artifact name>/`.
    `pr-context.json`, `gitleaks-report.json` and the review evidence never
    leave the zip. An existing file is never overwritten with different
-   bytes: collect fails closed and writes nothing. Each invocation writes
+   bytes, and no directory on the way may be a symlink. Writes are
+   all-or-nothing: files are staged and hard-linked into place, and any
+   failure removes everything the invocation created, so collect exits 2
+   and leaves the archive unchanged. Each invocation writes
    one immutable `collection-manifest-<stamp>.json` at the archive root. It
    records, per run, the id, attempt, status and conclusion, and per
    artifact the id, digest, expiry and archived files with sha256. The files

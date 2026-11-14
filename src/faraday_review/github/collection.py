@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
 import zipfile
 from pathlib import Path
@@ -94,16 +95,77 @@ def observed_visibility(client: GitHubClient, repository: str) -> str:
     return "private"
 
 
+def _check_destination(path: Path, root: Path) -> None:
+    """Every component from the archive root down to `path` must be a real
+    directory (or not exist yet), and `path` itself must not be a symlink or
+    a directory. A symlinked ancestor could redirect writes anywhere,
+    including into the public repository (Codex P1, #10)."""
+    current = root
+    for part in path.relative_to(root).parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise CollectionError(f"refusing symlinked directory {current}")
+        if current.exists() and not current.is_dir():
+            raise CollectionError(f"{current} exists and is not a directory")
+    if path.is_symlink() or path.is_dir():
+        raise CollectionError(f"refusing non-regular destination {path}")
+
+
+def _stage_bytes(fh, raw: bytes) -> None:
+    fh.write(raw)
+    fh.flush()
+    os.fsync(fh.fileno())
+
+
+def _publish(items: list[tuple[Path, Path, bytes]]) -> None:
+    """Write (root, path, bytes) all-or-nothing. Each file is staged
+    complete in a sibling temp file and hard-linked into place (never
+    replacing an existing name); on any failure every file and directory
+    this call created is removed again, so no partial or truncated
+    publication survives (Codex P2, #10)."""
+    created_files: list[Path] = []
+    created_dirs: list[Path] = []
+    try:
+        for root, path, raw in items:
+            _check_destination(path, root)
+            if path.exists():
+                if path.read_bytes() != raw:
+                    raise CollectionError(f"{path} exists with different bytes; never overwritten")
+                continue
+            if not root.exists():
+                root.mkdir(parents=True)
+                created_dirs.append(root)
+            current = root
+            for part in path.relative_to(root).parts[:-1]:
+                current = current / part
+                if not current.exists():
+                    current.mkdir()
+                    created_dirs.append(current)
+            _check_destination(path, root)
+            staging = path.with_name(f".{path.name}.partial-{os.getpid()}")
+            try:
+                with staging.open("xb") as fh:
+                    _stage_bytes(fh, raw)
+                os.link(staging, path)
+            finally:
+                staging.unlink(missing_ok=True)
+            created_files.append(path)
+    except BaseException as exc:
+        for path in reversed(created_files):
+            path.unlink(missing_ok=True)
+        for directory in reversed(created_dirs):
+            # Only directories this call created, and only if now empty.
+            if directory.is_dir() and not any(directory.iterdir()):
+                directory.rmdir()
+        if isinstance(exc, OSError):
+            raise CollectionError(f"archive write failed ({exc.strerror or exc}); "
+                                  "nothing from this collection was kept") from exc
+        raise
+
+
 def _write_immutable(path: Path, raw: bytes) -> None:
-    if path.is_symlink():
-        raise CollectionError(f"refusing symlink at {path}")
-    if path.exists():
-        if path.read_bytes() != raw:
-            raise CollectionError(f"{path} exists with different bytes; never overwritten")
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as fh:
-        fh.write(raw)
+    """Single-file form of `_publish` (root = the file's directory)."""
+    _publish([(path.parent, path, raw)])
 
 
 def _extract(raw: bytes) -> dict[str, bytes]:
@@ -140,7 +202,7 @@ def _existing_files(directory: Path, root: Path) -> list[dict[str, Any]]:
 
 
 def _plan_artifact(client: GitHubClient, repository: str, run_id: int, artifact: dict[str, Any],
-                   root: Path, writes: list[tuple[Path, bytes]]) -> dict[str, Any] | None:
+                   root: Path, writes: list[tuple[Path, Path, bytes]]) -> dict[str, Any] | None:
     match = ARTIFACT_NAME_RE.match(str(artifact.get("name", "")))
     if not match:
         return None
@@ -180,9 +242,10 @@ def _plan_artifact(client: GitHubClient, repository: str, run_id: int, artifact:
     for member in sorted(members):
         path = directory / member
         data = members[member]
-        if path.exists() and (path.is_symlink() or path.read_bytes() != data):
+        _check_destination(path, root)
+        if path.exists() and path.read_bytes() != data:
             raise CollectionError(f"{path} exists with different bytes; never overwritten")
-        writes.append((path, data))
+        writes.append((root, path, data))
         record["files"].append({"name": member, "path": path.relative_to(root).as_posix(),
                                 "sha256": _sha256(data), "size": len(data)})
     record["archived"] = bool(record["files"])
@@ -190,7 +253,7 @@ def _plan_artifact(client: GitHubClient, repository: str, run_id: int, artifact:
 
 
 def _collect_repo(client: GitHubClient, entry: dict[str, Any], visibility: str, root: Path,
-                  writes: list[tuple[Path, bytes]]) -> dict[str, Any]:
+                  writes: list[tuple[Path, Path, bytes]]) -> dict[str, Any]:
     repository = entry["repository"]
     workflow = entry["workflow"].rsplit("/", 1)[-1]
     params: dict[str, Any] = {}
@@ -246,13 +309,13 @@ def collect(client: GitHubClient, enrollment: list[dict[str, Any]], *, public_ar
 
     stamp = re.sub(r"[^0-9TZ]", "", collected_at)
     per_root: dict[Path, list[dict[str, Any]]] = {}
-    writes: list[tuple[Path, bytes]] = []
+    writes: list[tuple[Path, Path, bytes]] = []
     for entry, visibility in plan:
         root = public_archive if visibility == "public" else private_archive
         assert root is not None
         per_root.setdefault(root, []).append(_collect_repo(client, entry, visibility, root, writes))
 
-    manifests: list[tuple[Path, bytes]] = []
+    manifests: list[tuple[Path, Path, bytes]] = []
     for root, repos in per_root.items():
         manifest = {"format": COLLECTION_MANIFEST_FORMAT, "collected_at": collected_at,
                     "repositories": sorted(repos, key=lambda r: repo_identity(r["repository"]))}
@@ -261,17 +324,15 @@ def collect(client: GitHubClient, enrollment: list[dict[str, Any]], *, public_ar
             raise CollectionError(f"manifest fails schema: {errors[:3]}")
         path = root / f"{COLLECTION_MANIFEST_PREFIX}{stamp}.json"
         raw = canonical_bytes(manifest) + b"\n"
-        if path.exists() and path.read_bytes() != raw:
-            raise CollectionError(f"{path} exists with different bytes; never overwritten")
-        manifests.append((path, raw))
+        # An existing manifest with different bytes is refused by _publish,
+        # which then rolls back everything this collection wrote.
+        manifests.append((root, path, raw))
 
-    for path, raw in writes:
-        _write_immutable(path, raw)
-    for path, raw in manifests:
-        _write_immutable(path, raw)
+    # Manifests last: a manifest never names a file that is not in place.
+    _publish(writes + manifests)
     return {
         "repositories": sum(len(r) for r in per_root.values()),
         "runs": sum(len(r["runs"]) for repos in per_root.values() for r in repos),
         "files_written": len(writes),
-        "manifests": [p.as_posix() for p, _ in manifests],
+        "manifests": [p.as_posix() for _, p, _ in manifests],
     }

@@ -309,14 +309,17 @@ def test_invalid_manifest_is_an_anomaly(repo_root):
 
 def test_never_overwrites_with_different_bytes(monkeypatch, tmp_path, repo_root):
     _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
-    api = Api().repo(PUB).run(PUB, 509)
+    api = Api().repo(PUB).run(PUB, 509).run(PUB, 510)
     api.artifact(PUB, 509, _run_files(tmp_path, "r1"))
+    later = api.artifact(PUB, 510, _run_files(tmp_path, "r2"))
     art = _archive(repo_root) / "faraday-build" / "pilot" / "509" / f"faraday-review-pr1-{HEAD}-a1"
     art.mkdir(parents=True)
     (art / "telemetry.jsonl").write_bytes(b"earlier bytes\n")
-    code, _ = _collect(monkeypatch, api, repo_root)
+    code, session = _collect(monkeypatch, api, repo_root)
     assert code == 2
     assert (art / "telemetry.jsonl").read_bytes() == b"earlier bytes\n"
+    # Detected while planning: no later artifact is even downloaded.
+    assert ("GET", f"/repos/{PUB}/actions/artifacts/{later}/zip") not in session.calls
     assert not list(_archive(repo_root).glob("collection-manifest-*.json"))
     # Detected at plan time: nothing else from the run was written either.
     assert sorted(p.name for p in art.iterdir()) == ["telemetry.jsonl"]
@@ -513,3 +516,75 @@ def test_collected_v03_legacy_artifacts_aggregate_with_bounds(monkeypatch, tmp_p
     assert identity["execution_count_bounds"] == {"min": 2, "max": 3}
     assert "legacy_execution_identity_unknown" in _kinds(ledger)
     assert "run_without_telemetry" not in _kinds(ledger)
+
+
+# ------------------------------------------------------------ Codex round 1 on #10 (9245287)
+
+
+def test_symlinked_ancestor_cannot_redirect_private_writes(monkeypatch, tmp_path, repo_root):
+    """Codex P1 #10 collection.py:106: a directory under the private archive
+    that is a symlink into the public repository must not receive private
+    files."""
+    _enroll(repo_root, {"repository": PRIV, "visibility": "private", "workflow": WF})
+    store = tmp_path / "operator-private-archive"
+    store.mkdir()
+    _archive(repo_root).mkdir(parents=True)
+    (store / "secret-org").symlink_to(_archive(repo_root), target_is_directory=True)
+    code, _ = _collect(monkeypatch, _private_fixture(tmp_path), repo_root,
+                       "--private-archive-dir", str(store))
+    assert code == 2
+    assert not [p for p in _archive(repo_root).rglob("*") if p.is_file()]
+
+
+def test_symlinked_archive_root_component_refused(monkeypatch, tmp_path, repo_root):
+    _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
+    api = Api().repo(PUB).run(PUB, 530)
+    api.artifact(PUB, 530, _run_files(tmp_path, "r1"))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _archive(repo_root).mkdir(parents=True)
+    (_archive(repo_root) / "faraday-build").symlink_to(elsewhere, target_is_directory=True)
+    assert _collect(monkeypatch, api, repo_root)[0] == 2
+    assert not [p for p in elsewhere.rglob("*") if p.is_file()]
+
+
+def test_write_failure_leaves_no_partial_publication(monkeypatch, tmp_path, repo_root):
+    """Codex P2 #10 collection.py:271: a later destination that cannot be
+    written (a regular file where its directory must go) leaves nothing
+    from this invocation behind, and no manifest."""
+    _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
+    api = Api().repo(PUB).run(PUB, 531).run(PUB, 532).run(PUB, 534)
+    api.artifact(PUB, 531, _run_files(tmp_path, "r1"))
+    api.artifact(PUB, 532, _run_files(tmp_path, "r2"))
+    later = api.artifact(PUB, 534, _run_files(tmp_path, "r3"))
+    blocker = _archive(repo_root) / "faraday-build" / "pilot" / "532"
+    blocker.parent.mkdir(parents=True)
+    blocker.write_bytes(b"not a directory")
+    code, session = _collect(monkeypatch, api, repo_root)
+    assert code == 2
+    assert ("GET", f"/repos/{PUB}/actions/artifacts/{later}/zip") not in session.calls
+    files = [p for p in _archive(repo_root).rglob("*") if p.is_file()]
+    assert files == [blocker]
+
+
+def test_interrupted_write_never_leaves_truncated_bytes(monkeypatch, tmp_path, repo_root):
+    """A failure mid-write (disk full) must not leave a truncated final
+    file that later collections would reject as an immutable conflict."""
+    from faraday_review.github import collection as col
+    _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
+    api = Api().repo(PUB).run(PUB, 533)
+    api.artifact(PUB, 533, _run_files(tmp_path, "r1"))
+    real = col._stage_bytes
+    calls = {"n": 0}
+
+    def flaky(fh, raw):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            fh.write(raw[: len(raw) // 2])
+            raise OSError(28, "No space left on device")
+        return real(fh, raw)
+    monkeypatch.setattr(col, "_stage_bytes", flaky)
+    assert _collect(monkeypatch, api, repo_root)[0] == 2
+    assert not [p for p in _archive(repo_root).rglob("*") if p.is_file()]
+    monkeypatch.setattr(col, "_stage_bytes", real)
+    assert _collect(monkeypatch, api, repo_root)[0] == 0

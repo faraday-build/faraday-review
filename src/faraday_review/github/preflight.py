@@ -8,7 +8,8 @@ Read-only (GET only) activation checks for one caller repository:
 * `labels`: the four faraday/founder-* labels exist;
 * `caller_pin`: the caller workflow pins shadow.yml by a full SHA, passes
   the same `reviewer_sha`, and that SHA is on faraday-review main;
-* the enable variable FARADAY_REVIEW_SHADOW_ENABLED is reported, not gated.
+* the enable variable FARADAY_REVIEW_SHADOW_ENABLED is reported, not gated,
+  unless it cannot be read (then it is a gap).
 
 Anything the token cannot read is `unknown`, and unknown is never a pass.
 """
@@ -178,6 +179,10 @@ def preflight(client: GitHubClient, repository: str, *,
     gaps.extend(found)
     enable = _variable(client, repository, ENABLE_VARIABLE, repo_visibility)
     enable = {k: v for k, v in enable.items() if k in ("status", "value", "scope", "reason")}
+    if enable["status"] == "unknown":
+        # A known value (even "false" or absent) is reported, not gated; an
+        # unreadable one is a gap, because unknown never passes (Codex P2, #10).
+        gaps.append(f"{ENABLE_VARIABLE}: unknown ({enable.get('reason')})")
     return {
         "repository": repository,
         "workflow": workflow,

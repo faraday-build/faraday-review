@@ -8,7 +8,8 @@ over the committed ledger and synthetic list with its own generated_at and
 threshold and byte-compare. With --prior-ledger (the base branch's ledger),
 aggregate also enforces input continuity against it.
 
-No ledger committed: passes vacuously. No network; outputs go to a private
+No ledger committed and no prior ledger: passes vacuously. A prior ledger
+with no current one fails. No network; outputs go to a private
 temporary directory. Exit 0 = reproduces, 1 = differs, 2 = cannot run.
 """
 
@@ -29,6 +30,12 @@ def _main(argv: list[str] | None = None) -> int:
     qual = Path(args.qualification_dir)
     ledger_path, readiness_path = qual / "ledger.json", qual / "readiness.json"
     if not ledger_path.is_file():
+        if args.prior_ledger:
+            # The base branch has a ledger: deleting outputs (and archive)
+            # together must not bypass continuity (Codex P2, #10).
+            print("reproduce: the prior ledger exists but ledger.json is not committed; "
+                  "qualification outputs are never removed", file=sys.stderr)
+            return 1
         if readiness_path.exists():
             print("reproduce: readiness.json is committed without ledger.json", file=sys.stderr)
             return 1
