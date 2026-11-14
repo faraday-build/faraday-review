@@ -555,8 +555,11 @@ def aggregate(input_dir: Path, *, generated_at: str,
     raw_adjudications: list[tuple[dict[str, Any], str]] = []
     invalid_events = 0
 
+    # Every file that can change the ledger is a recorded input, so prior-
+    # ledger continuity holds it too. run-binding.json only adds anomalies,
+    # but changing or deleting it must still be visible (Codex P2, #7).
     wanted = {TELEMETRY_FILE: "telemetry", ADJUDICATIONS_FILE: "adjudications",
-              DECISION_FILE: "decision"}
+              DECISION_FILE: "decision", RUN_BINDING_FILE: "run_binding"}
     paths = sorted(p for p in input_dir.rglob("*") if p.name in wanted)
     for path in paths:
         rel = path.relative_to(input_dir).as_posix()

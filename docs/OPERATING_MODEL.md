@@ -77,7 +77,10 @@ Executions are identified by the v0.4.0 `execution` field and deduplicated
 across runs. Pre-v0.4.0 records give bounded, not exact, tallies (see
 `PHASE_2_INPUTS.md`). Ledgers are `qualification-ledger/v2`.
 `--prior-ledger` also accepts a committed v1 ledger, because continuity is
-checked on inputs, which v1 and v2 record identically.
+checked on inputs (kind + sha256). v2 additionally records each
+`run-binding.json` as a `run_binding` input, so a later window cannot change
+or drop a binding that an earlier ledger recorded; a v1 prior ledger has no
+such inputs and requires none.
 The real-PR gate threshold has a hard floor of 20; `readiness` exits 2 on
 any lower value.
 

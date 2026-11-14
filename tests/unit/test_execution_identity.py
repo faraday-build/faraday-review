@@ -509,6 +509,35 @@ def test_t18c_repository_spelling_in_binding_is_casefolded(tmp_path):
     assert "run_binding_mismatch" not in _kinds(_ledger(tmp_path))
 
 
+def test_t18e_run_binding_is_a_recorded_input_and_held_by_continuity(tmp_path):
+    """Codex P2 (#7 at 460d374, qualification.py:560). run-binding.json
+    changes the anomaly set, so it is an input: recorded with its digest,
+    and a prior ledger that recorded it fails closed if it changes or goes."""
+    good = write_run(tmp_path, "good", pr=1, event_id=E1, execution=gha(101))
+    _binding(good)
+    prior = _ledger(tmp_path)
+    bindings = [i for i in prior["inputs"] if i["kind"] == "run_binding"]
+    assert [i["path"] for i in bindings] == ["good/run-binding.json"]
+    assert aggregate(tmp_path, generated_at=TS, prior_ledger=prior)["inputs"] == prior["inputs"]
+
+    _binding(good, run_attempt="2")
+    with pytest.raises(QualificationError, match="run_binding:"):
+        aggregate(tmp_path, generated_at=TS, prior_ledger=prior)
+    (good / "run-binding.json").unlink()
+    with pytest.raises(QualificationError, match="run_binding:"):
+        aggregate(tmp_path, generated_at=TS, prior_ledger=prior)
+
+
+def test_t18f_symlinked_run_binding_is_reported_not_silently_ignored(tmp_path):
+    good = write_run(tmp_path, "good", pr=1, event_id=E1, execution=gha(101))
+    _binding(tmp_path)
+    (good / "run-binding.json").symlink_to(tmp_path / "run-binding.json")
+    ledger = _ledger(tmp_path)
+    skipped = [a["source"] for a in ledger["anomalies"] if a["kind"] == "non_regular_file_skipped"]
+    assert "good/run-binding.json" in skipped
+    assert "run_binding_mismatch" not in _kinds(ledger)
+
+
 # ------------------------------------------------------------ T19 / T21
 
 

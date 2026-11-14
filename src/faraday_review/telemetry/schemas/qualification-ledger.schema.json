@@ -105,7 +105,7 @@
         "required": ["path", "kind", "sha256"],
         "properties": {
           "path": { "type": "string" },
-          "kind": { "enum": ["telemetry", "adjudications", "decision"] },
+          "kind": { "enum": ["telemetry", "adjudications", "decision", "run_binding"] },
           "sha256": { "$ref": "#/$defs/digest" }
         }
       }
