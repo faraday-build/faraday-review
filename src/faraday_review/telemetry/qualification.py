@@ -42,6 +42,7 @@ from referencing.jsonschema import DRAFT202012
 from ..canonical import canonical_bytes
 from ..evidence.schema_validation import validation_errors
 from ..fingerprints import run_fingerprint
+from ..governance.escalation import RELEASED_REVIEW_REQUIREMENTS, RISK_CLASSES
 from .adjudication import ADJUDICATIONS_FILE, VALID_CLASSIFICATIONS
 from .throughput import _parse, _percentile
 
@@ -50,7 +51,7 @@ DECISION_FILE = "decision.json"
 DEFAULT_FOUNDER_NODE_ID = "U_kgDODk3msA"
 LEDGER_FORMAT = "faraday-review/qualification-ledger/v2"
 LEDGER_FORMAT_V1 = "faraday-review/qualification-ledger/v1"
-READINESS_FORMAT = "faraday-review/qualification-readiness/v3"
+READINESS_FORMAT = "faraday-review/qualification-readiness/v4"
 RUN_BINDING_FILE = "run-binding.json"
 # The only files `collect` archives from a run artifact (GHO-004 P2).
 ARCHIVED_FILES = (TELEMETRY_FILE, DECISION_FILE, ADJUDICATIONS_FILE, RUN_BINDING_FILE)
@@ -104,7 +105,8 @@ BLOCKING_REASON_CATEGORIES = {
 EXCLUSION_PRECEDENCE = ("unknown", "misconfigured", "refused", "infrastructure_blocked",
                         "policy_digest_unverified")
 EXCLUSION_KINDS = ("incomplete", *EXCLUSION_PRECEDENCE, "unadjudicated")
-GATE_CRITERION = "adjudicated_qualifying_real_pr_count >= threshold"
+GATE_CRITERION = ("adjudicated_qualifying_real_pr_count >= threshold "
+                  "AND escalation_condition.status == pass")
 SUPERSEDED_GATE_CRITERION = "real_pr_count >= threshold"
 
 
@@ -346,6 +348,7 @@ def _occurrences(group: list[tuple[dict[str, Any], str]],
                 "failure_mode": event["failure_mode"],
                 "stale_state": event["stale_state"],
                 "classifier_class": event["classifier_class"],
+                "escalated": event["escalated"],
                 "blocking_reasons": event["blocking_reasons"],
                 "budget_exhausted": _budget_exhausted(event),
                 "policy_digest_verified": "verified" in evidence,
@@ -966,12 +969,183 @@ def _occurrence_exclusions(occ: dict[str, Any], digest_verified: bool,
     return sorted(found)
 
 
+def _checked_requirements(table: Any) -> dict[str, dict[str, bool]]:
+    """A digest -> {class: bool} table covering every class, or
+    QualificationError. Copied, so the caller's table is never aliased."""
+    if not isinstance(table, dict):
+        raise QualificationError("review requirements must map policy digests to class tables")
+    if not all(isinstance(k, str) for k in table):
+        raise QualificationError("review requirements: policy digests must be strings")
+    out: dict[str, dict[str, bool]] = {}
+    for digest in sorted(table):
+        row = table[digest]
+        if (not isinstance(row, dict)
+                or sorted(row) != sorted(RISK_CLASSES)
+                or not all(isinstance(row[c], bool) for c in RISK_CLASSES)):
+            raise QualificationError(
+                "review requirements: each policy digest needs a boolean for every class "
+                f"{list(RISK_CLASSES)}")
+        out[digest] = {c: row[c] for c in RISK_CLASSES}
+    return out
+
+
+def _rate(numerator: int, denominator: int) -> float | None:
+    """Null, never 0, when the denominator is 0."""
+    return round(numerator / denominator, 6) if denominator else None
+
+
+def _agreement(items: list[dict[str, Any]], anomalies: list[dict[str, Any]]) -> dict[str, Any]:
+    """Agreement and founder latency over adjudicated `items` (each carries
+    its scored class and escalation)."""
+    matrix = {c: {f: 0 for f in CLASS_ORDER} for c in CLASS_ORDER}
+    agree = disagree = over = under = 0
+    disagreements: list[dict[str, Any]] = []
+    latencies_all: list[float] = []
+    latencies_escalated: list[float] = []
+    for item in items:
+        entry = item["entry"]
+        adj = entry["founder_adjudication"]
+        cls, founder = item["scored_class"], adj["founder_classification"]
+        if cls not in CLASS_ORDER:
+            anomalies.append({"kind": "adjudicated_run_without_class",
+                              "repository": entry["repository"], "pr_number": entry["pr_number"]})
+        else:
+            matrix[cls][founder] += 1
+            if cls == founder:
+                agree += 1
+            else:
+                disagree += 1
+                direction = ("over_escalation" if CLASS_ORDER.index(cls) > CLASS_ORDER.index(founder)
+                             else "under_escalation")
+                if direction == "over_escalation":
+                    over += 1
+                else:
+                    under += 1
+                disagreements.append({"repository": entry["repository"],
+                                      "pr_number": entry["pr_number"],
+                                      "head_sha": entry["head_sha"], "classifier_class": cls,
+                                      "founder_classification": founder, "direction": direction})
+        latency = (_parse(adj["labeled_at"]) - _parse(item["first_seen"])).total_seconds()
+        if latency < 0:
+            anomalies.append({"kind": "adjudication_precedes_first_run",
+                              "repository": entry["repository"], "pr_number": entry["pr_number"],
+                              "head_sha": entry["head_sha"]})
+            continue
+        latencies_all.append(latency)
+        if item["scored_escalated"]:
+            latencies_escalated.append(latency)
+    compared = agree + disagree
+    return {
+        "agreement": {
+            "compared": compared,
+            "agree": agree,
+            "disagree": disagree,
+            "agreement_rate": _rate(agree, compared),
+            "confusion_matrix": matrix,
+            "direction": {"over_escalation": over, "under_escalation": under},
+            "disagreements": disagreements,
+        },
+        "founder_latency": {
+            "all_adjudicated": _summary(latencies_all),
+            "escalated_only": _summary(latencies_escalated),
+        },
+    }
+
+
+def _escalation(items: list[dict[str, Any]]) -> dict[str, Any]:
+    by_class = {c: 0 for c in CLASS_ORDER}
+    escalated = too_large = budget = 0
+    for item in items:
+        if item["scored_class"] in by_class:
+            by_class[item["scored_class"]] += 1
+        escalated += 1 if item["scored_escalated"] else 0
+        too_large += 1 if TOO_LARGE_REASON in item["scored_reasons"] else 0
+        budget += 1 if BUDGET_REASON in item["scored_reasons"] else 0
+    return {"escalated_count": escalated, "classifier_class_distribution": by_class,
+            "pr_too_large_escalations": too_large, "api_budget_exceeded_escalations": budget}
+
+
+def _escalation_accuracy(items: list[dict[str, Any]],
+                         requirements: dict[str, dict[str, bool]]) -> dict[str, Any]:
+    """O2 over the adjudicated qualifying PRs. Truth: the founder's class
+    requires founder review under the policy digest the scored occurrence
+    was evaluated under. Prediction: that occurrence's recorded escalation.
+    Either one undeterminable makes the PR `unknown`."""
+    cells = {"true_escalation": 0, "unnecessary_escalation": 0,
+             "missed_escalation": 0, "true_non_escalation": 0}
+    missed: list[dict[str, Any]] = []
+    unknown: list[dict[str, Any]] = []
+    for item in items:
+        entry = item["entry"]
+        founder = entry["founder_adjudication"]["founder_classification"]
+        ref = {"repository": entry["repository"], "pr_number": entry["pr_number"],
+               "head_sha": entry["head_sha"]}
+        mapping = requirements.get(item["scored_digest"]) if item["scored_digest"] else None
+        predicted = item["scored_escalated"]
+        if mapping is None or founder not in mapping:
+            unknown.append({**ref, "reason": "policy_mapping_unknown"})
+            continue
+        if not isinstance(predicted, bool):
+            unknown.append({**ref, "reason": "prediction_unknown"})
+            continue
+        truth = mapping[founder]
+        if truth and predicted:
+            cells["true_escalation"] += 1
+        elif truth:
+            cells["missed_escalation"] += 1
+            missed.append({**ref, "classifier_class": item["scored_class"],
+                           "founder_classification": founder})
+        elif predicted:
+            cells["unnecessary_escalation"] += 1
+        else:
+            cells["true_non_escalation"] += 1
+    mandatory = cells["true_escalation"] + cells["missed_escalation"]
+    return {
+        "population": "adjudicated_qualifying",
+        "matrix": cells,
+        "mandatory_escalations": mandatory,
+        "missed_escalations": cells["missed_escalation"],
+        "missed_escalation_prs": missed,
+        "unknown": len(unknown),
+        "unknown_prs": unknown,
+        "escalation_recall": _rate(cells["true_escalation"], mandatory),
+        "escalation_precision": _rate(cells["true_escalation"],
+                                      cells["true_escalation"] + cells["unnecessary_escalation"]),
+        "unnecessary_escalation_rate": _rate(
+            cells["unnecessary_escalation"],
+            cells["unnecessary_escalation"] + cells["true_non_escalation"]),
+        "policy_digests_mapped": sorted(requirements),
+    }
+
+
+def _escalation_condition(accuracy: dict[str, Any]) -> dict[str, Any]:
+    """O2 gate: pass needs zero missed mandatory escalations, zero unknowns
+    and at least one mandatory escalation. Unknown or zero denominators
+    never pass."""
+    missed, unknown = accuracy["missed_escalations"], accuracy["unknown"]
+    mandatory = accuracy["mandatory_escalations"]
+    if missed:
+        status = "fail"
+    elif unknown or not mandatory:
+        status = "unknown"
+    else:
+        status = "pass"
+    return {"status": status, "missed": missed, "mandatory_total": mandatory,
+            "unknown": unknown}
+
+
 def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, generated_at: str,
               ledger_evidence: dict[str, str], synthetic_evidence: dict[str, str],
               threshold: int = GATE_THRESHOLD_FLOOR,
-              released_policy_digests: list[str] | None = None) -> dict[str, Any]:
+              released_policy_digests: list[str] | None = None,
+              review_requirements: dict[str, dict[str, bool]] | None = None) -> dict[str, Any]:
+    """`review_requirements` maps a policy digest to {class: founder review
+    required} (the O2 truth); default: the governance-pinned table for the
+    released digests. A digest without a mapping makes its PRs `unknown`."""
     require_timestamp(generated_at, "generated_at")
     released = sorted(set(released_policy_digests)) if released_policy_digests is not None else None
+    requirements = _checked_requirements(
+        RELEASED_REVIEW_REQUIREMENTS if review_requirements is None else review_requirements)
     if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < GATE_THRESHOLD_FLOOR:
         raise QualificationError(
             f"gate threshold {threshold!r} rejected: hard floor is {GATE_THRESHOLD_FLOOR}")
@@ -1053,7 +1227,10 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
                     adjudicated_on_eligible = True
                     rank = (_sort_key_ts(occ["created_at"]), occ["event_key"])
                     if scored is None or rank > scored[0]:
-                        scored = (rank, occ["classifier_class"])
+                        # The ledger records `escalated` per occurrence
+                        # (absent in older v2 ledgers: prediction unknown).
+                        scored = (rank, occ["classifier_class"], occ.get("escalated"),
+                                  pair_run["policy_bundle_digest"], occ["blocking_reasons"])
         if adjudicated_on_eligible:
             status = "adjudicated_qualifying"
         elif qualifying:
@@ -1069,63 +1246,29 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         counted.append({"entry": entry, "run": run, "first_seen": first_seen,
                         "all_runs": [r for _, r in pairs],
                         "scored_class": scored[1] if scored else run["classifier_class"],
+                        "scored_escalated": scored[2] if scored else run["escalated"],
+                        "scored_digest": scored[3] if scored else None,
+                        "scored_reasons": scored[4] if scored else run["blocking_reasons"],
                         "qualification": {"status": status,
                                           "exclusion_reasons": sorted(reasons_seen)}})
 
-    # Agreement.
-    matrix = {c: {f: 0 for f in CLASS_ORDER} for c in CLASS_ORDER}
-    agree = disagree = over = under = 0
-    disagreements: list[dict[str, Any]] = []
-    latencies_all: list[float] = []
-    latencies_escalated: list[float] = []
-    adjudicated = 0
-    for item in counted:
-        entry, run = item["entry"], item["run"]
-        adj = entry["founder_adjudication"]
-        if adj is None:
-            continue
-        adjudicated += 1
-        cls, founder = item["scored_class"], adj["founder_classification"]
-        if cls not in CLASS_ORDER:
-            anomalies.append({"kind": "adjudicated_run_without_class",
-                              "repository": entry["repository"], "pr_number": entry["pr_number"]})
-        else:
-            matrix[cls][founder] += 1
-            if cls == founder:
-                agree += 1
-            else:
-                disagree += 1
-                direction = ("over_escalation" if CLASS_ORDER.index(cls) > CLASS_ORDER.index(founder)
-                             else "under_escalation")
-                if direction == "over_escalation":
-                    over += 1
-                else:
-                    under += 1
-                disagreements.append({"repository": entry["repository"],
-                                      "pr_number": entry["pr_number"],
-                                      "head_sha": entry["head_sha"], "classifier_class": cls,
-                                      "founder_classification": founder, "direction": direction})
-        latency = (_parse(adj["labeled_at"]) - _parse(item["first_seen"])).total_seconds()
-        if latency < 0:
-            anomalies.append({"kind": "adjudication_precedes_first_run",
-                              "repository": entry["repository"], "pr_number": entry["pr_number"],
-                              "head_sha": entry["head_sha"]})
-            continue
-        latencies_all.append(latency)
-        if run["escalated"]:
-            latencies_escalated.append(latency)
-
-    compared = agree + disagree
-    by_class = {c: 0 for c in CLASS_ORDER}
-    escalated = 0
-    too_large = budget = 0
-    for item in counted:
-        run = item["run"]
-        if run["classifier_class"] in by_class:
-            by_class[run["classifier_class"]] += 1
-        escalated += 1 if run["escalated"] else 0
-        too_large += 1 if TOO_LARGE_REASON in run["blocking_reasons"] else 0
-        budget += 1 if BUDGET_REASON in run["blocking_reasons"] else 0
+    # O1: metrics over the gate population (adjudicated qualifying PRs,
+    # scored occurrence); the pre-O1 populations are reported as context and
+    # never feed the gate.
+    gate_items = [i for i in counted if i["qualification"]["status"] == "adjudicated_qualifying"]
+    all_adjudicated = [i for i in counted if i["entry"]["founder_adjudication"] is not None]
+    primary = _agreement(gate_items, anomalies)
+    # Context keeps the pre-O1 definitions exactly: the D10 scored class, and
+    # the representative run's escalation for escalated-only latency.
+    context = _agreement([{**i, "scored_escalated": i["run"]["escalated"]}
+                          for i in all_adjudicated], anomalies)
+    # Context escalation keeps its pre-O1 definition: every counted PR's
+    # representative run.
+    context_escalation = _escalation([
+        {"scored_class": i["run"]["classifier_class"], "scored_escalated": i["run"]["escalated"],
+         "scored_reasons": i["run"]["blocking_reasons"]} for i in counted])
+    accuracy = _escalation_accuracy(gate_items, requirements)
+    condition = _escalation_condition(accuracy)
 
     # Drift and infrastructure health over every real run (incl. superseded).
     current_runs = [r for item in counted for r in item["all_runs"]]
@@ -1194,26 +1337,17 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
             for i in counted
         ],
         "synthetic_excluded": synthetic_excluded,
-        "adjudicated_count": adjudicated,
-        "agreement": {
-            "compared": compared,
-            "agree": agree,
-            "disagree": disagree,
-            "agreement_rate": (round(agree / compared, 6) if compared else None),
-            "confusion_matrix": matrix,
-            "direction": {"over_escalation": over, "under_escalation": under},
-            "disagreements": disagreements,
+        "adjudicated_count": len(all_adjudicated),
+        "agreement": primary["agreement"],
+        "escalation": _escalation(gate_items),
+        "escalation_accuracy": accuracy,
+        "founder_latency": primary["founder_latency"],
+        "context_all_adjudicated": {
+            "adjudicated_count": len(all_adjudicated),
+            "agreement": context["agreement"],
+            "founder_latency": context["founder_latency"],
         },
-        "escalation": {
-            "escalated_count": escalated,
-            "classifier_class_distribution": by_class,
-            "pr_too_large_escalations": too_large,
-            "api_budget_exceeded_escalations": budget,
-        },
-        "founder_latency": {
-            "all_adjudicated": _summary(latencies_all),
-            "escalated_only": _summary(latencies_escalated),
-        },
+        "context_all_real_prs": {"escalation": context_escalation},
         "drift": {
             "policy_bundle_digests": digests,
             "policy_digest_drift": len(digests) > 1,
@@ -1245,7 +1379,8 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
             "criterion": GATE_CRITERION,
             "criterion_status": "founder_confirmed",
             "released_policy_digests": released,
-            "met": adjudicated_qualifying >= threshold,
+            "escalation_condition": condition,
+            "met": adjudicated_qualifying >= threshold and condition["status"] == "pass",
             "superseded_criterion": {"criterion": SUPERSEDED_GATE_CRITERION,
                                      "met": real_pr_count >= threshold,
                                      "authoritative": False},

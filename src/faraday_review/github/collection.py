@@ -72,6 +72,61 @@ def load_enrollment(path: Path) -> list[dict[str, Any]]:
     return data
 
 
+# Keys whose values name a repository in qualification outputs (ledger,
+# readiness, collection manifest, anomalies). Founder ruling 2026-11-14, O3.
+_IDENTITY_KEYS = ("repository", "caller_repo")
+_IDENTITY_LIST_KEYS = ("repository_spellings",)
+
+
+def named_repositories(document: Any) -> list[str]:
+    """Every repository identity a JSON document names under an identity
+    key, at any depth; sorted, unique, as spelled."""
+    found: set[str] = set()
+    stack = [document]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in _IDENTITY_KEYS and isinstance(value, str):
+                    found.add(value)
+                elif key in _IDENTITY_LIST_KEYS and isinstance(value, list):
+                    found.update(v for v in value if isinstance(v, str))
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return sorted(found)
+
+
+def public_identity_violations(document: Any, enrollment: list[dict[str, Any]]) -> int:
+    """How many distinct repository identities (case-insensitive) the
+    document names that the enrollment does not declare public. A repository
+    absent from the enrollment counts: nothing is public by default."""
+    public = {repo_identity(e["repository"]) for e in enrollment if e["visibility"] == "public"}
+    return len({repo_identity(r) for r in named_repositories(document)} - public)
+
+
+def check_public_destination(output: Path, document: Any, enrollment_path: Path | None) -> None:
+    """Refuse to write `document` to `output` inside a git checkout (a public
+    repository, as for `collect`) when it names any repository that the
+    enrollment does not declare public. The enrollment defaults to the
+    checkout's docs/qualification/enrollment.json; a missing or invalid one
+    fails closed. Outside any checkout nothing is checked (the private side,
+    like --private-archive-dir). The refused identities are never printed."""
+    root = _git_root(output.resolve().parent)
+    if root is None:
+        return
+    path = enrollment_path if enrollment_path is not None \
+        else root / "docs" / "qualification" / "enrollment.json"
+    enrollment = load_enrollment(path)
+    count = public_identity_violations(document, enrollment)
+    if count:
+        raise CollectionError(
+            f"refusing to write {count} repository identit{'y' if count == 1 else 'ies'} not "
+            f"enrolled as public into {output}, which is inside a git checkout (public). "
+            "Write it outside the repository instead (founder ruling O3).")
+
+
 def _git_root(path: Path) -> Path | None:
     for candidate in (path, *path.parents):
         if (candidate / ".git").exists():

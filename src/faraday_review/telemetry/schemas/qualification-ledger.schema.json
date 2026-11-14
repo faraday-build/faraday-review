@@ -31,6 +31,7 @@
         "failure_mode": { "type": ["string", "null"] },
         "stale_state": { "type": ["string", "null"] },
         "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] },
+        "escalated": { "type": "boolean", "description": "The event's escalation (founder review requested), copied verbatim. Optional: absent in ledgers written before readiness/v4, for which the escalation-accuracy prediction is unknown." },
         "blocking_reasons": { "type": "array", "items": { "type": "string" } },
         "budget_exhausted": { "type": "boolean" },
         "policy_digest_verified": { "type": "boolean", "description": "Some copy of this occurrence carried a decision.json whose digest reproduces the fingerprint." },

@@ -27,7 +27,9 @@ def _prs(root, digest, n=20):
 def _report(root, released):
     report = readiness(aggregate(root, generated_at=TS), [], generated_at=TS,
                        ledger_evidence=EV, synthetic_evidence=EV,
-                       released_policy_digests=released)
+                       released_policy_digests=released,
+                       review_requirements={DIGEST_A: {"green": False, "yellow": True,
+                                                       "red": True, "block": True}})
     assert local_validation_errors("qualification-readiness", report) == []
     return report
 
