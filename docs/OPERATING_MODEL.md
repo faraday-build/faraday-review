@@ -22,7 +22,9 @@
 
 ## What telemetry answers (Phase 2 gate)
 
-After ≥20 real PRs, `faraday-review throughput` + the log must answer:
+After ≥20 qualifying real PRs with founder adjudication (gate criterion in
+`PHASE_2_INPUTS.md`, pending founder confirmation), `faraday-review
+throughput` + the log must answer:
 
 - which classifications the deterministic plane got wrong (per
   adjudication), and in which direction
@@ -81,8 +83,9 @@ checked on inputs (kind + sha256). v2 additionally records each
 `run-binding.json` as a `run_binding` input, so a later window cannot change
 or drop a binding that an earlier ledger recorded; a v1 prior ledger has no
 such inputs and requires none.
-The real-PR gate threshold has a hard floor of 20; `readiness` exits 2 on
-any lower value.
+Readiness reports are `qualification-readiness/v3`. The gate counts
+adjudicated qualifying real PRs (`PHASE_2_INPUTS.md`, "Gate criterion"); its
+threshold has a hard floor of 20, and `readiness` exits 2 on any lower value.
 
 ## Hard rules
 

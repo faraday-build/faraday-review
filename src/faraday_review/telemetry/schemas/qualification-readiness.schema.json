@@ -2,16 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://faraday-lab.dev/schemas/local/qualification-readiness.schema.json",
   "title": "QualificationReadiness",
-  "description": "Output of `faraday-review readiness`: the machine-readable Phase 1 gate report derived from a QualificationLedger. gate.threshold has a hard floor of 20; synthetic PRs never count.",
+  "description": "Output of `faraday-review readiness` (qualification-readiness/v3): the machine-readable Phase 1 gate report derived from a QualificationLedger. gate.met is adjudicated_qualifying_real_pr_count >= gate.threshold; the threshold has a hard floor of 20 and the criterion is pending founder confirmation. real_pr_count keeps its v2 meaning and the v2 criterion is reported as gate.superseded_criterion, never authoritative. Synthetic PRs never count.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["format", "generated_at", "real_pr_count", "counted_prs", "synthetic_excluded", "adjudicated_count", "agreement", "escalation", "founder_latency", "drift", "anomalies", "evidence", "gate"],
+  "required": ["format", "generated_at", "real_pr_count", "qualifying_real_pr_count", "adjudicated_qualifying_real_pr_count", "qualification", "counted_prs", "synthetic_excluded", "adjudicated_count", "agreement", "escalation", "founder_latency", "drift", "anomalies", "evidence", "gate"],
   "$defs": {
     "class": { "enum": ["green", "yellow", "red", "block"] },
     "count": { "type": "integer", "minimum": 0 },
     "bounds": { "type": "object", "additionalProperties": false, "required": ["min", "max"], "properties": { "min": { "type": "integer", "minimum": 0 }, "max": { "type": "integer", "minimum": 0 } } },
     "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "exclusion": { "enum": ["unknown", "misconfigured", "refused", "infrastructure_blocked", "policy_digest_unverified"] },
     "row": {
       "type": "object",
       "additionalProperties": false,
@@ -39,22 +40,64 @@
     }
   },
   "properties": {
-    "format": { "const": "faraday-review/qualification-readiness/v2" },
+    "format": { "const": "faraday-review/qualification-readiness/v3" },
     "generated_at": { "type": "string", "format": "date-time" },
-    "real_pr_count": { "$ref": "#/$defs/count" },
+    "real_pr_count": { "$ref": "#/$defs/count", "description": "v2 definition, unchanged: distinct real (repository, PR) with a completed, fresh, identity-eligible run on the current head. Not the gate count." },
+    "qualifying_real_pr_count": { "$ref": "#/$defs/count", "description": "Real PRs whose current head has at least one eligible occurrence: completed, fresh, identity-eligible, policy digest verified, a known classifier class, and no blocking reason outside the 'classification' category." },
+    "adjudicated_qualifying_real_pr_count": { "$ref": "#/$defs/count", "description": "Qualifying real PRs with an accepted founder adjudication (node_id re-checked at aggregate time) on the exact head of an eligible occurrence. The gate count." },
+    "qualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["real_prs_in_ledger", "exclusions", "incomplete_prs", "exclusion_precedence"],
+      "properties": {
+        "real_prs_in_ledger": { "$ref": "#/$defs/count", "description": "Distinct non-synthetic (repository, PR) in the ledger: adjudicated_qualifying_real_pr_count plus the sum of exclusions." },
+        "exclusions": {
+          "description": "Every real PR outside the gate count, under exactly one kind. incomplete: no completed fresh run on a current head (failed-only, stale-only or identity-ineligible). unadjudicated: qualifying, but no valid founder adjudication on an eligible head. Otherwise the PR's first kind in exclusion_precedence.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["incomplete", "unknown", "misconfigured", "refused", "infrastructure_blocked", "policy_digest_unverified", "unadjudicated"],
+          "properties": {
+            "incomplete": { "$ref": "#/$defs/count" }, "unknown": { "$ref": "#/$defs/count" },
+            "misconfigured": { "$ref": "#/$defs/count" }, "refused": { "$ref": "#/$defs/count" },
+            "infrastructure_blocked": { "$ref": "#/$defs/count" },
+            "policy_digest_unverified": { "$ref": "#/$defs/count" },
+            "unadjudicated": { "$ref": "#/$defs/count" }
+          }
+        },
+        "incomplete_prs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repository", "pr_number"],
+            "properties": { "repository": { "$ref": "#/$defs/repository" }, "pr_number": { "type": "integer", "minimum": 1 } }
+          }
+        },
+        "exclusion_precedence": { "type": "array", "items": { "$ref": "#/$defs/exclusion" } }
+      }
+    },
     "counted_prs": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["repository", "pr_number", "head_sha", "review_id", "classifier_class", "adjudicated"],
+        "required": ["repository", "pr_number", "head_sha", "review_id", "classifier_class", "adjudicated", "qualification"],
         "properties": {
           "repository": { "$ref": "#/$defs/repository" },
           "pr_number": { "type": "integer", "minimum": 1 },
           "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
           "review_id": { "type": "string" },
           "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] },
-          "adjudicated": { "type": "boolean" }
+          "adjudicated": { "type": "boolean" },
+          "qualification": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "exclusion_reasons"],
+            "properties": {
+              "status": { "enum": ["adjudicated_qualifying", "unadjudicated", "unknown", "misconfigured", "refused", "infrastructure_blocked", "policy_digest_unverified"] },
+              "exclusion_reasons": { "type": "array", "items": { "$ref": "#/$defs/exclusion" }, "description": "Every exclusion found on any candidate occurrence of the current head, sorted; also listed for a qualifying PR." }
+            }
+          }
         }
       }
     },
@@ -201,11 +244,23 @@
     "gate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["threshold", "criterion", "met"],
+      "required": ["threshold", "criterion", "criterion_status", "met", "superseded_criterion"],
       "properties": {
         "threshold": { "type": "integer", "minimum": 20 },
-        "criterion": { "const": "real_pr_count >= threshold" },
-        "met": { "type": "boolean" }
+        "criterion": { "const": "adjudicated_qualifying_real_pr_count >= threshold" },
+        "criterion_status": { "const": "pending_founder_confirmation" },
+        "met": { "type": "boolean" },
+        "superseded_criterion": {
+          "description": "The v2 criterion, reported so nothing is hidden. Never authoritative.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["criterion", "met", "authoritative"],
+          "properties": {
+            "criterion": { "const": "real_pr_count >= threshold" },
+            "met": { "type": "boolean" },
+            "authoritative": { "const": false }
+          }
+        }
       }
     }
   }
