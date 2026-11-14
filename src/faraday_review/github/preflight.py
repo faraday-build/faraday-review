@@ -75,10 +75,14 @@ def _variable(client: GitHubClient, repository: str, name: str,
     if visibility == "all" or (visibility == "private" and repo_visibility != "public"):
         return {"status": "set", "value": body.get("value"), "scope": "organization"}
     if visibility == "selected":
-        state, listed = _get(client, f"/orgs/{owner}/actions/variables/{name}/repositories")
-        if state != "ok":
+        # Every page: the repository may be listed after the first one, and
+        # a failure on any page is unknown, never absent (Codex P2, #10).
+        try:
+            listed = client.paginate_key(f"/orgs/{owner}/actions/variables/{name}/repositories",
+                                         "repositories")
+        except GitHubApiError:
             return {"status": "unknown", "reason": "organization variable repository list unreadable"}
-        names = {str(r.get("full_name", "")).casefold() for r in listed.get("repositories", [])}
+        names = {str(r.get("full_name", "")).casefold() for r in listed if isinstance(r, dict)}
         if repository.casefold() in names:
             return {"status": "set", "value": body.get("value"), "scope": "organization"}
     return {"status": "absent", "reason": f"organization variable not visible (visibility={visibility})"}

@@ -455,10 +455,12 @@ def test_declared_private_but_public_is_still_private(monkeypatch, tmp_path, rep
 def test_private_archive_inside_public_repo_refused(monkeypatch, tmp_path, repo_root, where):
     _enroll(repo_root, {"repository": PRIV, "visibility": "private", "workflow": WF})
     target = (repo_root / "private-store") if where == "inside_repo" else (_archive(repo_root) / "p")
-    code, _ = _collect(monkeypatch, _private_fixture(tmp_path), repo_root,
-                       "--private-archive-dir", str(target))
+    code, session = _collect(monkeypatch, _private_fixture(tmp_path), repo_root,
+                             "--private-archive-dir", str(target))
     assert code == 2
     assert not target.exists()
+    # Refused up front, before any repository, run or artifact request.
+    assert session.calls == []
 
 
 def test_private_metadata_never_lands_in_public_archive(monkeypatch, tmp_path, repo_root):
@@ -588,3 +590,30 @@ def test_interrupted_write_never_leaves_truncated_bytes(monkeypatch, tmp_path, r
     assert not [p for p in _archive(repo_root).rglob("*") if p.is_file()]
     monkeypatch.setattr(col, "_stage_bytes", real)
     assert _collect(monkeypatch, api, repo_root)[0] == 0
+
+
+# ------------------------------------------------------------ Codex round 2 on #10 (d5a17c0)
+
+
+def test_private_archive_that_contains_the_public_checkout_is_refused(monkeypatch, tmp_path):
+    """Codex P1 #10 collection.py:296: a private archive that is an ANCESTOR
+    of the public checkout would place secret-org/hidden-repo inside it."""
+    work = tmp_path / "work"
+    checkout = work / "secret-org" / "hidden-repo"
+    (checkout / ".git").mkdir(parents=True)
+    (checkout / "docs" / "qualification").mkdir(parents=True)
+    _enroll(checkout, {"repository": PRIV, "visibility": "private", "workflow": WF})
+    code, session = _collect(monkeypatch, _private_fixture(tmp_path), checkout,
+                             "--private-archive-dir", str(work))
+    assert code == 2
+    assert not [p for p in checkout.rglob("telemetry.jsonl")]
+    assert all("/actions/" not in path for _, path in session.calls)
+
+
+def test_destination_inside_public_checkout_refused_even_if_roots_disjoint(tmp_path):
+    from faraday_review.github.collection import CollectionError, _publish
+    checkout = tmp_path / "checkout"
+    (checkout / ".git").mkdir(parents=True)
+    with pytest.raises(CollectionError, match="public"):
+        _publish([(tmp_path, checkout / "x" / "telemetry.jsonl", b"{}\n")], forbidden=checkout)
+    assert not (checkout / "x").exists()

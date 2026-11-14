@@ -205,3 +205,34 @@ def test_absent_enable_variable_is_reported_not_gating(monkeypatch, capsys):
 
 
 ENABLE = "FARADAY_REVIEW_SHADOW_ENABLED"
+
+
+def test_selected_org_variable_repository_list_is_paginated(monkeypatch, capsys):
+    """Codex P2 #10 preflight.py:81: the repo can be on a later page."""
+    routes = _routes()
+    del routes[f"/repos/{REPO}/actions/variables/FARADAY_POLICY_DIGEST"]
+    routes[f"/orgs/{OWNER}/actions/variables/FARADAY_POLICY_DIGEST"] = (
+        200, {"name": "FARADAY_POLICY_DIGEST", "value": DIGEST, "visibility": "selected"})
+    page1 = f"/orgs/{OWNER}/actions/variables/FARADAY_POLICY_DIGEST/repositories"
+    page2 = "/fake-page-2"
+    routes[page1] = (200, {"total_count": 101,
+                           "repositories": [{"full_name": f"{OWNER}/r{i}"} for i in range(100)]},
+                     {"next": {"url": "https://api.github.com" + page2}})
+    routes[page2] = (200, {"total_count": 101, "repositories": [{"full_name": REPO}]})
+    code, report, _ = _preflight(monkeypatch, capsys, routes)
+    assert code == 0, report
+    assert _status(report)["policy_digest"] == "pass"
+
+
+def test_selected_org_variable_later_page_failure_is_unknown(monkeypatch, capsys):
+    routes = _routes()
+    del routes[f"/repos/{REPO}/actions/variables/FARADAY_POLICY_DIGEST"]
+    routes[f"/orgs/{OWNER}/actions/variables/FARADAY_POLICY_DIGEST"] = (
+        200, {"name": "FARADAY_POLICY_DIGEST", "value": DIGEST, "visibility": "selected"})
+    page1 = f"/orgs/{OWNER}/actions/variables/FARADAY_POLICY_DIGEST/repositories"
+    routes[page1] = (200, {"total_count": 101, "repositories": []},
+                     {"next": {"url": "https://api.github.com/fake-page-2"}})
+    routes["/fake-page-2"] = (403, {"message": "no"})
+    code, report, _ = _preflight(monkeypatch, capsys, routes)
+    assert code == 1
+    assert _status(report)["policy_digest"] == "unknown"

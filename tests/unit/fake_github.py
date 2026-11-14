@@ -57,8 +57,8 @@ class FakeSession:
         self.calls.append((method, path))
         if path not in self.routes:
             return FakeResponse(404, {"message": "Not Found"})
-        status, body = self.routes[path]
-        return FakeResponse(status, body)
+        status, body, *links = self.routes[path]
+        return FakeResponse(status, body, links[0] if links else None)
 
 
 def make_zip(members: dict[str, bytes]) -> bytes:

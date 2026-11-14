@@ -117,7 +117,7 @@ def _stage_bytes(fh, raw: bytes) -> None:
     os.fsync(fh.fileno())
 
 
-def _publish(items: list[tuple[Path, Path, bytes]]) -> None:
+def _publish(items: list[tuple], forbidden: Path | None = None) -> None:
     """Write (root, path, bytes) all-or-nothing. Each file is staged
     complete in a sibling temp file and hard-linked into place (never
     replacing an existing name); on any failure every file and directory
@@ -126,7 +126,14 @@ def _publish(items: list[tuple[Path, Path, bytes]]) -> None:
     created_files: list[Path] = []
     created_dirs: list[Path] = []
     try:
-        for root, path, raw in items:
+        for item in items:
+            root, path, raw = item[:3]
+            no_go = item[3] if len(item) > 3 else forbidden
+            if no_go is not None and _inside(path, no_go):
+                # Private bytes never land inside the public checkout,
+                # whatever the archive roots look like (Codex P1, #10).
+                raise CollectionError(f"refusing to write a private destination inside the "
+                                      f"public repository: {path}")
             _check_destination(path, root)
             if path.exists():
                 if path.read_bytes() != raw:
@@ -292,8 +299,12 @@ def collect(client: GitHubClient, enrollment: list[dict[str, Any]], *, public_ar
     repo_root = _git_root(public_archive) or public_archive
     if private_archive is not None:
         private_archive = private_archive.resolve()
-        if _inside(private_archive, repo_root) or _inside(private_archive, public_archive):
-            raise CollectionError("--private-archive-dir must be outside the public repository")
+        # Disjoint in BOTH directions: a private archive that contains the
+        # public checkout would place owner/repo paths inside it (Codex P1, #10).
+        if (_inside(private_archive, repo_root) or _inside(private_archive, public_archive)
+                or _inside(repo_root, private_archive) or _inside(public_archive, private_archive)):
+            raise CollectionError("--private-archive-dir must not overlap the public repository "
+                                  "(neither inside it nor containing it)")
 
     plan: list[tuple[dict[str, Any], str]] = []
     for index, entry in enumerate(enrollment):
@@ -329,7 +340,8 @@ def collect(client: GitHubClient, enrollment: list[dict[str, Any]], *, public_ar
         manifests.append((root, path, raw))
 
     # Manifests last: a manifest never names a file that is not in place.
-    _publish(writes + manifests)
+    _publish([(root, path, raw, repo_root if root == private_archive else None)
+              for root, path, raw in writes + manifests])
     return {
         "repositories": sum(len(r) for r in per_root.values()),
         "runs": sum(len(r["runs"]) for repos in per_root.values() for r in repos),
