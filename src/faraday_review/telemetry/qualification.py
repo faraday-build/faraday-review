@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -51,6 +52,11 @@ LEDGER_FORMAT = "faraday-review/qualification-ledger/v2"
 LEDGER_FORMAT_V1 = "faraday-review/qualification-ledger/v1"
 READINESS_FORMAT = "faraday-review/qualification-readiness/v2"
 RUN_BINDING_FILE = "run-binding.json"
+# The only files `collect` archives from a run artifact (GHO-004 P2).
+ARCHIVED_FILES = (TELEMETRY_FILE, DECISION_FILE, ADJUDICATIONS_FILE, RUN_BINDING_FILE)
+COLLECTION_MANIFEST_FORMAT = "faraday-review/qualification-collection/v1"
+COLLECTION_MANIFEST_PREFIX = "collection-manifest-"
+_MANIFEST_NAME_RE = re.compile(r"^collection-manifest-[0-9TZ]+\.json$")
 
 # Hard floor. The Phase 1 gate may be raised, never lowered.
 GATE_THRESHOLD_FLOOR = 20
@@ -537,6 +543,91 @@ def _prior_inputs(prior_ledger: dict[str, Any], founder_node_id: str) -> set[tup
     return {(i["kind"], i["sha256"]) for i in prior_ledger["inputs"]}
 
 
+def _load_manifest(path: Path, rel: str, anomalies: list[dict[str, Any]]) -> dict[str, Any] | None:
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        manifest = None
+    errors = (local_validation_errors("qualification-collection-manifest", manifest)
+              if manifest is not None else ["not JSON"])
+    if not errors and _aware(manifest.get("collected_at")) is None:
+        errors = ["collected_at: not a timezone-aware ISO-8601 timestamp"]
+    if errors:
+        anomalies.append({"kind": "invalid_collection_manifest", "source": rel,
+                          "errors": errors[:5]})
+        return None
+    return manifest
+
+
+def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
+                          inputs: list[dict[str, Any]],
+                          anomalies: list[dict[str, Any]]) -> None:
+    """Expected-but-absent evidence (GHO-004 P2). Manifests are merged in
+    collected_at order, so a later collection's view of a run wins and an
+    artifact archived by any collection stays archived. A file counts only if
+    the archive still holds it with the recorded sha256 (else
+    `collection_file_missing`). Then, for every completed, non-skipped run
+    and each of its attempts 1..run_attempt:
+
+    * an archived telemetry.jsonl: fine;
+    * else an artifact for that attempt that expired unarchived:
+      `artifact_expired_unarchived`;
+    * else `run_without_telemetry` (failed, cancelled, or no artifact).
+
+    An enrolled repository whose manifests list no run at all is
+    `enrolled_repo_without_runs`."""
+    present = {(i["path"], i["sha256"]) for i in inputs}
+    repos: dict[str, dict[int, dict[str, Any]]] = {}
+    artifacts: dict[tuple[str, int], dict[int, dict[str, Any]]] = {}
+    ordered = sorted(manifests, key=lambda m: (_sort_key_ts(m[1]["collected_at"]), m[0]))
+    for _, manifest in ordered:
+        for repo in manifest["repositories"]:
+            key = repo_identity(repo["repository"])
+            runs = repos.setdefault(key, {})
+            for run in repo["runs"]:
+                runs[run["run_id"]] = run
+                by_id = artifacts.setdefault((key, run["run_id"]), {})
+                for art in run["artifacts"]:
+                    merged = by_id.setdefault(art["artifact_id"], {
+                        "attempt": art["attempt"], "telemetry": False, "files": set()})
+                    merged["expired"] = art["expired"]
+                    merged["expires_at"] = art["expires_at"]
+                    for f in art["files"]:
+                        if (f["path"], f["sha256"]) not in present:
+                            anomalies.append({"kind": "collection_file_missing", "repository": key,
+                                              "run_id": run["run_id"],
+                                              "artifact_id": art["artifact_id"],
+                                              "file": f["name"]})
+                            continue
+                        merged["files"].add(f["name"])
+                        merged["telemetry"] = merged["telemetry"] or f["name"] == TELEMETRY_FILE
+    for key in sorted(repos):
+        runs = repos[key]
+        if not runs:
+            anomalies.append({"kind": "enrolled_repo_without_runs", "repository": key})
+            continue
+        for run_id in sorted(runs):
+            run = runs[run_id]
+            if run["status"] != "completed" or run["conclusion"] == "skipped":
+                continue
+            arts = artifacts.get((key, run_id), {})
+            for attempt in range(1, run["run_attempt"] + 1):
+                mine = {aid: a for aid, a in arts.items() if a["attempt"] == attempt}
+                if any(a["telemetry"] for a in mine.values()):
+                    continue
+                lost = [(aid, a) for aid, a in sorted(mine.items())
+                        if a["expired"] and not a["files"]]
+                for aid, a in lost:
+                    anomalies.append({"kind": "artifact_expired_unarchived", "repository": key,
+                                      "run_id": run_id, "run_attempt": attempt,
+                                      "artifact_id": aid, "expires_at": a["expires_at"]})
+                if not lost:
+                    anomalies.append({"kind": "run_without_telemetry", "repository": key,
+                                      "run_id": run_id, "run_attempt": attempt,
+                                      "conclusion": run["conclusion"]
+                                      if attempt == run["run_attempt"] else None})
+
+
 def aggregate(input_dir: Path, *, generated_at: str,
               founder_node_id: str = DEFAULT_FOUNDER_NODE_ID,
               prior_ledger: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -560,13 +651,16 @@ def aggregate(input_dir: Path, *, generated_at: str,
     # but changing or deleting it must still be visible (Codex P2, #7).
     wanted = {TELEMETRY_FILE: "telemetry", ADJUDICATIONS_FILE: "adjudications",
               DECISION_FILE: "decision", RUN_BINDING_FILE: "run_binding"}
-    paths = sorted(p for p in input_dir.rglob("*") if p.name in wanted)
+    # Collection manifests (`faraday-review collect`) are inputs too: they
+    # are the only record of runs that left no telemetry.
+    paths = sorted(p for p in input_dir.rglob("*")
+                   if p.name in wanted or _MANIFEST_NAME_RE.match(p.name))
     for path in paths:
         rel = path.relative_to(input_dir).as_posix()
         if path.is_symlink() or not path.is_file():
             anomalies.append({"kind": "non_regular_file_skipped", "source": rel})
             continue
-        inputs.append({"path": rel, "kind": wanted[path.name],
+        inputs.append({"path": rel, "kind": wanted.get(path.name, "collection_manifest"),
                        "sha256": _sha256_bytes(path.read_bytes())})
 
     missing_prior = required_prior - {(i["kind"], i["sha256"]) for i in inputs}
@@ -576,11 +670,16 @@ def aggregate(input_dir: Path, *, generated_at: str,
             f"{len(missing_prior)} input(s) recorded in the prior ledger are missing from "
             f"{input_dir} (archive them under docs/qualification/artifacts/): {sample}")
 
+    manifests: list[tuple[str, dict[str, Any]]] = []
     for path in paths:
         rel = path.relative_to(input_dir).as_posix()
         if path.is_symlink() or not path.is_file():
             continue
-        if path.name == TELEMETRY_FILE:
+        if _MANIFEST_NAME_RE.match(path.name):
+            manifest = _load_manifest(path, rel, anomalies)
+            if manifest is not None:
+                manifests.append((rel, manifest))
+        elif path.name == TELEMETRY_FILE:
             binding = _load_binding(path.parent / RUN_BINDING_FILE, input_dir, anomalies)
             decision = None
             decision_path = path.parent / DECISION_FILE
@@ -616,6 +715,8 @@ def aggregate(input_dir: Path, *, generated_at: str,
                                       "line": lineno, "errors": errors[:5]})
                     continue
                 raw_adjudications.append((record, rel))
+
+    _collection_anomalies(manifests, inputs, anomalies)
 
     # Set-level identity first (C4, C7), then deduplicate runs by run identity.
     conflicted = _identity_scan(raw_runs, anomalies)

@@ -55,7 +55,27 @@ The repository is public, so callers in any organization can use it.
    or empty variable makes every run Block `policy_digest_unpinned`.
 3. Create the four adjudication labels:
    `faraday/founder-green|yellow|red|block`.
-4. Open a test PR; confirm one governed summary comment and the
+4. Run the read-only preflight and resolve every gap it lists:
+
+   ```bash
+   GITHUB_TOKEN=<read-only token> faraday-review preflight --repo <owner>/<repo>
+   ```
+
+   It exits 0 only when all of these hold:
+   - `FARADAY_POLICY_DIGEST` resolves for the repository (repository
+     variable, or an organization variable visible to it) and equals the
+     digest above;
+   - the four labels exist;
+   - the caller pins `shadow.yml` by a full SHA on faraday-review `main`,
+     with the same `reviewer_sha`.
+
+   It also reports `FARADAY_REVIEW_SHADOW_ENABLED`. A value the token
+   cannot read is reported as `unknown`, which never passes. The command
+   only reads.
+5. Add the repository to `docs/qualification/enrollment.json` (public
+   repositories only; see OPERATING_MODEL.md, "Private caller
+   repositories").
+6. Open a test PR; confirm one governed summary comment and the
    `faraday-review / governed-summary` check appear, and that nothing is
    approved or merged by the plane. Record the test PR as synthetic so it
    never counts toward the 20-real-PR gate.

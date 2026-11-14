@@ -77,6 +77,49 @@ class GitHubClient:
     def get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return self.request("GET", path, params=params).json()
 
+    def download(self, path: str, max_bytes: int,
+                 timeout: float = REQUEST_TIMEOUT_SECONDS) -> bytes:
+        """GET a binary body (an artifact zip), at most `max_bytes`. One
+        attempt, budgeted; any HTTP error or oversize body raises. The
+        Authorization header is dropped by requests on the cross-host
+        redirect to blob storage."""
+        url = path if path.startswith("http") else f"{API_ROOT}{path}"
+        self.budget.spend()
+        try:
+            response = self._session.request("GET", url, stream=True, timeout=timeout)
+        except requests.RequestException as exc:
+            raise GitHubApiError(f"GET {path} failed: {type(exc).__name__}") from exc
+        try:
+            if response.status_code >= 400:
+                raise GitHubApiError(f"GET {path} -> {response.status_code}")
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=65536):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise GitHubApiError(f"GET {path}: body exceeds {max_bytes} bytes")
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            response.close()
+
+    def paginate_key(self, path: str, key: str,
+                     params: dict[str, Any] | None = None) -> list[Any]:
+        """Like `paginate` for endpoints that wrap the list in an object
+        (`{"total_count": n, key: [...]}`)."""
+        items: list[Any] = []
+        params = dict(params or {})
+        params.setdefault("per_page", 100)
+        url: str | None = path
+        while url:
+            response = self.request("GET", url, params=params if url == path else None)
+            page = response.json()
+            if not isinstance(page, dict) or not isinstance(page.get(key), list):
+                raise GitHubApiError(f"expected an object with list {key!r} at {url}")
+            items.extend(page[key])
+            url = response.links.get("next", {}).get("url")
+        return items
+
     def paginate(self, path: str, params: dict[str, Any] | None = None) -> list[Any]:
         """Follow RFC 5988 Link headers; every page spends budget."""
         items: list[Any] = []
