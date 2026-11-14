@@ -1243,7 +1243,7 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
         "gate": {
             "threshold": threshold,
             "criterion": GATE_CRITERION,
-            "criterion_status": "pending_founder_confirmation",
+            "criterion_status": "founder_confirmed",
             "released_policy_digests": released,
             "met": adjudicated_qualifying >= threshold,
             "superseded_criterion": {"criterion": SUPERSEDED_GATE_CRITERION,

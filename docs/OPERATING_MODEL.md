@@ -23,7 +23,7 @@
 ## What telemetry answers (Phase 2 gate)
 
 After ≥20 qualifying real PRs with founder adjudication (gate criterion in
-`PHASE_2_INPUTS.md`, pending founder confirmation), `faraday-review
+`PHASE_2_INPUTS.md`, founder-confirmed 2026-11-14), `faraday-review
 throughput` + the log must answer:
 
 - which classifications the deterministic plane got wrong (per

@@ -3,7 +3,7 @@
 **Status: initialized empty.** Written last, populated only from shadow
 telemetry and founder adjudications. Phase 2 scoping does not begin until
 Phase 1 has run against at least 20 qualifying real PRs with founder
-adjudication (criterion below, pending founder confirmation).
+adjudication (criterion below, confirmed by the founder on 2026-11-14).
 
 ## Qualification status
 
@@ -12,7 +12,7 @@ This document remains the governing Phase 1 qualification record.
 | Item | Value |
 |---|---|
 | Adjudicated qualifying real PRs (gate count) | **0** |
-| Gate (≥ 20 adjudicated qualifying real PRs, hard floor; criterion pending founder confirmation) | **NOT met** |
+| Gate (≥ 20 adjudicated qualifying real PRs, hard floor; criterion founder-confirmed 2026-11-14) | **NOT met** |
 | Qualifying real PRs | 0 |
 | Real PRs counted (v2 definition, not the gate count) | 0 |
 | Founder adjudications applied | 0 |
@@ -100,14 +100,21 @@ above from `readiness.json` in the same PR.
 
 ## Gate criterion (qualification-readiness/v3)
 
-> **Pending founder policy confirmation.** The founder's stated Phase 2
-> requirement is "at least 20 qualifying real PRs with founder
-> adjudication". Up to v2 this repository implemented only "≥ 20 real PRs
-> (hard floor)", which a probe met with 20 unadjudicated PRs that were all
+> **Confirmed by the founder on 2026-11-14** (GHO-AUTONOMOUS-PRODUCTION-006
+> qualification policy ruling: D1–D10 and J1 accepted as documented). The
+> founder's Phase 2 requirement is "at least 20 qualifying real PRs with
+> founder adjudication". Up to v2 this repository implemented only "≥ 20 real
+> PRs (hard floor)", which a probe met with 20 unadjudicated PRs that were all
 > Blocked for `policy_digest_unpinned`. v3 implements the stricter reading
-> below. It can only make the gate harder to meet; the floor stays 20 and
-> can only be raised. Until the founder confirms it, `gate.criterion_status`
-> is `pending_founder_confirmation`.
+> below. It can only make the gate harder to meet; the floor stays 20 and can
+> only be raised. `gate.criterion_status` is `founder_confirmed`.
+>
+> The same ruling approved follow-up work, delivered separately and not part
+> of this criterion yet: metrics over eligible PRs with all-PR context (O1),
+> escalation-accuracy reporting with a zero-missed-mandatory-escalation
+> condition where an unknown denominator never passes (O2), and a check that
+> committed reports expose no private repository identity (O3). Rollback
+> continuity stays a manual check until the first real ledger qualifies (O4).
 
 ```
 gate.met = adjudicated_qualifying_real_pr_count >= threshold   (threshold >= 20)

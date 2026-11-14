@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://faraday-lab.dev/schemas/local/qualification-readiness.schema.json",
   "title": "QualificationReadiness",
-  "description": "Output of `faraday-review readiness` (qualification-readiness/v3): the machine-readable Phase 1 gate report derived from a QualificationLedger. gate.met is adjudicated_qualifying_real_pr_count >= gate.threshold; the threshold has a hard floor of 20 and the criterion is pending founder confirmation. real_pr_count keeps its v2 meaning and the v2 criterion is reported as gate.superseded_criterion, never authoritative. Synthetic PRs never count.",
+  "description": "Output of `faraday-review readiness` (qualification-readiness/v3): the machine-readable Phase 1 gate report derived from a QualificationLedger. gate.met is adjudicated_qualifying_real_pr_count >= gate.threshold; the threshold has a hard floor of 20 and the criterion (including D9 released-digest binding) was confirmed by the founder on 2026-11-14. real_pr_count keeps its v2 meaning and the v2 criterion is reported as gate.superseded_criterion, never authoritative. Synthetic PRs never count.",
   "type": "object",
   "additionalProperties": false,
   "required": ["format", "generated_at", "real_pr_count", "qualifying_real_pr_count", "adjudicated_qualifying_real_pr_count", "qualification", "counted_prs", "synthetic_excluded", "adjudicated_count", "agreement", "escalation", "founder_latency", "drift", "anomalies", "evidence", "gate"],
@@ -249,7 +249,7 @@
       "properties": {
         "threshold": { "type": "integer", "minimum": 20 },
         "criterion": { "const": "adjudicated_qualifying_real_pr_count >= threshold" },
-        "criterion_status": { "const": "pending_founder_confirmation" },
+        "criterion_status": { "const": "founder_confirmed" },
         "released_policy_digests": {
           "description": "Governance-released policy digests a counted run must have been evaluated under; any other verified digest is misconfigured. null = not enforced (library default only; the CLI always enforces).",
           "type": ["array", "null"],
