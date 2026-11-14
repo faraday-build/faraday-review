@@ -328,8 +328,12 @@ def _cmd_readiness(args) -> int:
     )
     code = _write_validated(Path(args.output), report, "qualification-readiness", "readiness")
     if code == 0:
-        print(f"readiness: real_pr_count={report['real_pr_count']} "
-              f"threshold={report['gate']['threshold']} met={report['gate']['met']}",
+        print(f"readiness: adjudicated_qualifying_real_pr_count="
+              f"{report['adjudicated_qualifying_real_pr_count']} "
+              f"qualifying_real_pr_count={report['qualifying_real_pr_count']} "
+              f"real_pr_count={report['real_pr_count']} "
+              f"threshold={report['gate']['threshold']} met={report['gate']['met']} "
+              f"(criterion {report['gate']['criterion_status']})",
               file=sys.stderr)
     return code
 

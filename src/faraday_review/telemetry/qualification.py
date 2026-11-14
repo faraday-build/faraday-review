@@ -49,7 +49,7 @@ DECISION_FILE = "decision.json"
 DEFAULT_FOUNDER_NODE_ID = "U_kgDODk3msA"
 LEDGER_FORMAT = "faraday-review/qualification-ledger/v2"
 LEDGER_FORMAT_V1 = "faraday-review/qualification-ledger/v1"
-READINESS_FORMAT = "faraday-review/qualification-readiness/v2"
+READINESS_FORMAT = "faraday-review/qualification-readiness/v3"
 RUN_BINDING_FILE = "run-binding.json"
 
 # Hard floor. The Phase 1 gate may be raised, never lowered.
@@ -62,6 +62,44 @@ LOCAL_SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 
 BUDGET_REASON = "github_api_budget_exceeded"
 TOO_LARGE_REASON = "pr_too_large_for_deterministic_classification"
+
+# Gate eligibility (qualification-readiness/v3). Not copied into the report:
+# two reason names contain authorization field names, which outputs never
+# carry (test_outputs_carry_no_authorization_fields). Every blocking reason the
+# Validator can emit (src/faraday_review/governance/), mapped to what it
+# says about the run. Justification per reason: docs/PHASE_2_INPUTS.md.
+# A test reads the Validator's source and fails when this table and the
+# Validator's vocabulary differ; at run time a reason missing here is
+# `unknown` and never counts.
+#   classification: the Validator classified the change (a real Block the
+#     founder can adjudicate); the run stays eligible.
+#   misconfigured: the run was not evaluated against a pinned, supported
+#     policy bundle and contract, so its class is not a calibration sample.
+#   refused: the Validator failed closed on the evidence it was given
+#     instead of classifying the change at the counted head.
+#   infrastructure_blocked: an infrastructure fault stopped evaluation.
+BLOCKING_REASON_CATEGORIES = {
+    "secret_detected": "classification",
+    "required_check_failing": "classification",
+    "required_check_missing": "classification",
+    "pr_too_large_for_deterministic_classification": "classification",
+    "policy_digest_unpinned": "misconfigured",
+    "policy_digest_mismatch": "misconfigured",
+    "policy_missing": "misconfigured",
+    "policy_version_unsupported": "misconfigured",
+    "contract_version_unsupported": "misconfigured",
+    "evidence_malformed": "refused",
+    "evidence_stale": "refused",
+    "unknown_evidence_class": "refused",
+    "github_api_budget_exceeded": "infrastructure_blocked",
+}
+# A PR with no eligible occurrence is reported under the first of these it
+# has (all of them are listed per PR in `exclusion_reasons`).
+EXCLUSION_PRECEDENCE = ("unknown", "misconfigured", "refused", "infrastructure_blocked",
+                        "policy_digest_unverified")
+EXCLUSION_KINDS = ("incomplete", *EXCLUSION_PRECEDENCE, "unadjudicated")
+GATE_CRITERION = "adjudicated_qualifying_real_pr_count >= threshold"
+SUPERSEDED_GATE_CRITERION = "real_pr_count >= threshold"
 
 
 class QualificationError(ValueError):
@@ -794,6 +832,24 @@ def _summary(values: list[float]) -> dict[str, Any]:
             "p90_seconds": _percentile(ordered, 0.9)}
 
 
+def _occurrence_exclusions(occ: dict[str, Any], digest_verified: bool) -> list[str]:
+    """Why one completed, fresh, identity-eligible occurrence cannot count
+    for the gate; empty means it is eligible. Unknown states (no class, an
+    unclassified reason, a blocking reason on a non-Block class, which the
+    Validator never emits) are `unknown`, never counted."""
+    found: set[str] = set()
+    cls, reasons = occ["classifier_class"], occ["blocking_reasons"]
+    if cls not in CLASS_ORDER or (reasons and cls != "block"):
+        found.add("unknown")
+    for reason in reasons:
+        category = BLOCKING_REASON_CATEGORIES.get(reason, "unknown")
+        if category != "classification":
+            found.add(category)
+    if not digest_verified:
+        found.add("policy_digest_unverified")
+    return sorted(found)
+
+
 def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, generated_at: str,
               ledger_evidence: dict[str, str], synthetic_evidence: dict[str, str],
               threshold: int = GATE_THRESHOLD_FLOOR) -> dict[str, Any]:
@@ -853,8 +909,41 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
             anomalies.append({"kind": "classifier_class_differs_on_current_head",
                               "repository": pr_key[0], "pr_number": pr_key[1],
                               "classes": classes})
+        # Gate eligibility (v3) per occurrence: a collapsed run's
+        # representative can hide an earlier eligible occurrence of the same
+        # head, and vice versa. Only completed, fresh, identity-eligible
+        # occurrences of current-head runs are candidates; the adjudication
+        # must sit on the entry (exact head) of an eligible occurrence.
+        qualifying = adjudicated_on_eligible = False
+        reasons_seen: set[str] = set()
+        for pair_entry, pair_run in pairs:
+            for occ in pair_run["occurrence_log"]:
+                if not (occ["eligible"] and occ["final_status"] == "completed"
+                        and occ["stale_state"] == "fresh"):
+                    continue
+                found = _occurrence_exclusions(occ, pair_run["policy_digest_verified"])
+                if found:
+                    reasons_seen.update(found)
+                    continue
+                qualifying = True
+                if pair_entry["founder_adjudication"] is not None:
+                    adjudicated_on_eligible = True
+        if adjudicated_on_eligible:
+            status = "adjudicated_qualifying"
+        elif qualifying:
+            status = "unadjudicated"
+        else:
+            # A counted PR always has a candidate occurrence, so reasons_seen
+            # is non-empty here; "unknown" is only a fail-closed default.
+            status = next((k for k in EXCLUSION_PRECEDENCE if k in reasons_seen), "unknown")
+            if any(e["founder_adjudication"] is not None for e, _ in pairs):
+                anomalies.append({"kind": "adjudicated_pr_not_qualifying",
+                                  "repository": pr_key[0], "pr_number": pr_key[1],
+                                  "status": status})
         counted.append({"entry": entry, "run": run, "first_seen": first_seen,
-                        "all_runs": [r for _, r in pairs]})
+                        "all_runs": [r for _, r in pairs],
+                        "qualification": {"status": status,
+                                          "exclusion_reasons": sorted(reasons_seen)}})
 
     # Agreement.
     matrix = {c: {f: 0 for f in CLASS_ORDER} for c in CLASS_ORDER}
@@ -946,15 +1035,35 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
                 budget_tally.add(occ)
 
     real_pr_count = len(counted)
+    real_prs = sorted({(repo_identity(e["repository"]), e["pr_number"]) for e in real_entries})
+    incomplete = [{"repository": r, "pr_number": n} for r, n in real_prs if (r, n) not in per_pr]
+    exclusions = {k: 0 for k in EXCLUSION_KINDS}
+    exclusions["incomplete"] = len(incomplete)
+    for item in counted:
+        status = item["qualification"]["status"]
+        if status != "adjudicated_qualifying":
+            exclusions[status] += 1
+    adjudicated_qualifying = sum(1 for i in counted
+                                 if i["qualification"]["status"] == "adjudicated_qualifying")
+    qualifying = adjudicated_qualifying + exclusions["unadjudicated"]
     return {
         "format": READINESS_FORMAT,
         "generated_at": generated_at,
         "real_pr_count": real_pr_count,
+        "qualifying_real_pr_count": qualifying,
+        "adjudicated_qualifying_real_pr_count": adjudicated_qualifying,
+        "qualification": {
+            "real_prs_in_ledger": len(real_prs),
+            "exclusions": exclusions,
+            "incomplete_prs": incomplete,
+            "exclusion_precedence": list(EXCLUSION_PRECEDENCE),
+        },
         "counted_prs": [
             {"repository": i["entry"]["repository"], "pr_number": i["entry"]["pr_number"],
              "head_sha": i["entry"]["head_sha"], "review_id": i["run"]["review_id"],
              "classifier_class": i["run"]["classifier_class"],
-             "adjudicated": i["entry"]["founder_adjudication"] is not None}
+             "adjudicated": i["entry"]["founder_adjudication"] is not None,
+             "qualification": i["qualification"]}
             for i in counted
         ],
         "synthetic_excluded": synthetic_excluded,
@@ -1000,10 +1109,18 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
             "synthetic": synthetic_evidence,
             "ledger_inputs": ledger["inputs"],
         },
+        # The gate criterion is the stricter reading of the Phase 2 mandate
+        # ("at least 20 qualifying real PRs with founder adjudication") and
+        # awaits founder confirmation (docs/PHASE_2_INPUTS.md). The v2
+        # criterion stays visible, explicitly non-authoritative.
         "gate": {
             "threshold": threshold,
-            "criterion": "real_pr_count >= threshold",
-            "met": real_pr_count >= threshold,
+            "criterion": GATE_CRITERION,
+            "criterion_status": "pending_founder_confirmation",
+            "met": adjudicated_qualifying >= threshold,
+            "superseded_criterion": {"criterion": SUPERSEDED_GATE_CRITERION,
+                                     "met": real_pr_count >= threshold,
+                                     "authoritative": False},
         },
     }
 

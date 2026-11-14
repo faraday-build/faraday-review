@@ -47,16 +47,26 @@ def build_v030_baseline(root: Path) -> None:
                 login="tomrivera-PSE", label="faraday/founder-green")
 
 
+_V2_COUNTED_FIELDS = ("repository", "pr_number", "head_sha", "review_id", "classifier_class",
+                      "adjudicated")
+
+
 def gate_view(report: dict) -> dict:
-    """The parts of a readiness report that identity must never change."""
+    """The parts of a readiness report that identity must never change,
+    projected onto the v1/v2 shape: readiness/v3 adds per-PR qualification
+    and a new gate criterion, and reports the v2 criterion as
+    `gate.superseded_criterion`, which must equal the frozen baseline gate."""
+    gate = report["gate"]
     return {
         "real_pr_count": report["real_pr_count"],
-        "counted_prs": report["counted_prs"],
+        "counted_prs": [{k: p[k] for k in _V2_COUNTED_FIELDS} for p in report["counted_prs"]],
         "synthetic_excluded": report["synthetic_excluded"],
         "adjudicated_count": report["adjudicated_count"],
         "agreement": report["agreement"],
         "escalation": report["escalation"],
-        "gate": report["gate"],
+        "gate": {"threshold": gate["threshold"],
+                 "criterion": gate["superseded_criterion"]["criterion"],
+                 "met": gate["superseded_criterion"]["met"]},
     }
 
 

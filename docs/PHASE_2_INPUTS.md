@@ -2,7 +2,8 @@
 
 **Status: initialized empty.** Written last, populated only from shadow
 telemetry and founder adjudications. Phase 2 scoping does not begin until
-Phase 1 has run against at least 20 real PRs.
+Phase 1 has run against at least 20 qualifying real PRs with founder
+adjudication (criterion below, pending founder confirmation).
 
 ## Qualification status
 
@@ -10,8 +11,10 @@ This document remains the governing Phase 1 qualification record.
 
 | Item | Value |
 |---|---|
-| Real PRs counted | **0** |
-| Gate (≥ 20 real PRs, hard floor) | **NOT met** |
+| Adjudicated qualifying real PRs (gate count) | **0** |
+| Gate (≥ 20 adjudicated qualifying real PRs, hard floor; criterion pending founder confirmation) | **NOT met** |
+| Qualifying real PRs | 0 |
+| Real PRs counted (v2 definition, not the gate count) | 0 |
 | Founder adjudications applied | 0 |
 | Synthetic PRs excluded | 0 (`docs/qualification/synthetic-prs.json` is empty) |
 
@@ -74,10 +77,11 @@ records have no execution identity and none is synthesized:
 `infrastructure_failures.status` is `bounded` with per-tally `bounds`.
 The figure given is the lower bound (distinct events). Identity never
 changes `real_pr_count`: it is still one counted run per real PR on its
-current head, with the 20-PR floor. `review_id` (review subject),
+current head. `review_id` (review subject),
 `fingerprint` (input digest) and `retries` (in-run API retries) keep their
-meaning; none of them is an execution identity. `gate.met` is `real_pr_count >= 20`; the
-threshold cannot be configured below 20. Founder labels are recorded with
+meaning; none of them is an execution identity. `gate.met` is
+`adjudicated_qualifying_real_pr_count >= threshold` (see "Gate criterion"
+below); the threshold cannot be configured below 20. Founder labels are recorded with
 `faraday-review adjudicate` and attached only to the exact head SHA they
 were applied to. The report also carries agreement (confusion matrix,
 over/under-escalation), escalation volume, founder latency median/p90,
@@ -87,6 +91,91 @@ failure counts, anomalies, and the sha256 of every input file. Schemas:
 
 When the operator commits a ledger + readiness report, update the table
 above from `readiness.json` in the same PR.
+
+## Gate criterion (qualification-readiness/v3)
+
+> **Pending founder policy confirmation.** The founder's stated Phase 2
+> requirement is "at least 20 qualifying real PRs with founder
+> adjudication". Up to v2 this repository implemented only "≥ 20 real PRs
+> (hard floor)", which a probe met with 20 unadjudicated PRs that were all
+> Blocked for `policy_digest_unpinned`. v3 implements the stricter reading
+> below. It can only make the gate harder to meet; the floor stays 20 and
+> can only be raised. Until the founder confirms it, `gate.criterion_status`
+> is `pending_founder_confirmation`.
+
+```
+gate.met = adjudicated_qualifying_real_pr_count >= threshold   (threshold >= 20)
+```
+
+- `real_pr_count` keeps its v2 definition (above) and stays in the report.
+  The v2 criterion is reported as `gate.superseded_criterion`
+  (`real_pr_count >= threshold`, `authoritative: false`), so nothing is
+  hidden.
+- `qualifying_real_pr_count`: real PRs whose current head has at least one
+  **eligible occurrence**. Candidates are the completed, fresh,
+  identity-eligible occurrences (`occurrence_log`) of the runs counted for
+  `real_pr_count` on the current head. An occurrence is eligible when its
+  run's policy digest is verified, its classifier class is known, and none
+  of its blocking reasons is outside the `classification` category in the
+  table below. Eligibility is judged per occurrence, because a collapsed
+  run's representative can hide an earlier eligible occurrence of the same
+  head (or the reverse).
+- `adjudicated_qualifying_real_pr_count`: qualifying real PRs with a valid
+  founder adjudication: an accepted record whose founder `node_id` is
+  re-checked at `aggregate` time, attached to the exact head SHA of an
+  eligible occurrence. An adjudication on a superseded head, on a
+  non-eligible run, or by anyone else never counts. An adjudicated PR that
+  does not qualify is reported as anomaly `adjudicated_pr_not_qualifying`.
+- Synthetic PRs are excluded exactly as before.
+
+Every real PR in the ledger is either in the gate count or in exactly one
+`qualification.exclusions` kind, so
+`adjudicated_qualifying_real_pr_count + Σ exclusions = qualification.real_prs_in_ledger`:
+
+| Exclusion | Meaning |
+|---|---|
+| `incomplete` | No completed fresh run on a current head: failed-only, stale-only or identity-ineligible. Listed in `qualification.incomplete_prs`. |
+| `unknown` | A state this consumer cannot interpret: no classifier class, a blocking reason not in the table below, or a blocking reason on a non-Block class (the Validator never emits that). Never counted. |
+| `misconfigured` | Blocked by a configuration reason (table). |
+| `refused` | Blocked by a refusal reason (table). |
+| `infrastructure_blocked` | Blocked by an infrastructure reason (table). |
+| `policy_digest_unverified` | The run's `decision.json` is absent or does not reproduce the fingerprint, so the policy digest it ran under is unproven. |
+| `unadjudicated` | Qualifying, but no valid founder adjudication on an eligible head. |
+
+A PR with no eligible occurrence is reported under the first kind it has
+in the order `unknown`, `misconfigured`, `refused`, `infrastructure_blocked`,
+`policy_digest_unverified` (`qualification.exclusion_precedence`); every
+kind found is listed in its `counted_prs[].qualification.exclusion_reasons`.
+The precedence affects only reporting, never the gate.
+
+Blocking reasons. This is the Validator's complete vocabulary
+(`src/faraday_review/governance/`); a test fails if the two ever differ.
+The table is kept in code and here, not in the report, because outputs
+never carry authorization field names.
+
+| Reason | Category | Why |
+|---|---|---|
+| `secret_detected` | classification | The Validator classified the change; a real Block the founder can adjudicate. |
+| `required_check_failing` | classification | Classified from the PR's observed required checks. |
+| `required_check_missing` | classification | Classified from the PR's observed required checks. |
+| `pr_too_large_for_deterministic_classification` | classification | A deterministic escalation outcome. These PRs are the Phase 2 inference case, so their adjudication is wanted calibration data. |
+| `policy_digest_unpinned` | misconfigured | `FARADAY_POLICY_DIGEST` was not set; the run was not evaluated against a pinned policy. |
+| `policy_digest_mismatch` | misconfigured | The bundle differs from the pinned digest; the run was not evaluated against the pinned policy. |
+| `policy_missing` | misconfigured | No usable policy bundle; nothing was evaluated against policy. |
+| `policy_version_unsupported` | misconfigured | The bundle's policy version is outside what this reviewer supports. |
+| `contract_version_unsupported` | misconfigured | The evidence contract version is unsupported (Ruling 16), so the evidence was not evaluated. |
+| `evidence_malformed` | refused | The Validator failed closed on evidence it could not read or bind to the context, instead of classifying the change. |
+| `evidence_stale` | refused | The evidence is for a different head than the context, so the class is not a classification of the counted head. |
+| `unknown_evidence_class` | refused | The evidence class is outside the accepted set; the Validator failed closed. |
+| `github_api_budget_exceeded` | infrastructure_blocked | An infrastructure fault stopped evaluation (kept separate from `pr_too_large_*`). |
+
+Known limits, unchanged by v3: "policy digest verified" means the digest is
+consistent with the run's own `decision.json` and, with no
+`policy_digest_unpinned` / `policy_digest_mismatch` reason, that the run was
+evaluated against the pin it was given; readiness does not compare it with a
+release digest (drift is reported in `drift.policy_bundle_digests`).
+`agreement`, `escalation` and `founder_latency` are still computed over the
+`real_pr_count` runs, as in v2.
 
 ## Miss patterns (deterministic classification vs founder adjudication)
 

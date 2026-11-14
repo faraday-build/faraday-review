@@ -253,8 +253,11 @@ def test_threshold_floor_cli_exit_2(tmp_path):
     assert main([*base, "--threshold", "19"]) == 2
     assert not out.exists()
     assert main([*base, "--threshold", "25"]) == 0
-    assert read_canonical(out)["gate"] == {"threshold": 25, "criterion": "real_pr_count >= threshold",
-                                           "met": False}
+    assert read_canonical(out)["gate"] == {
+        "threshold": 25, "criterion": "adjudicated_qualifying_real_pr_count >= threshold",
+        "criterion_status": "pending_founder_confirmation", "met": False,
+        "superseded_criterion": {"criterion": "real_pr_count >= threshold", "met": False,
+                                 "authoritative": False}}
 
 
 def test_gate_not_met_at_19_real(tmp_path):
@@ -265,11 +268,18 @@ def test_gate_not_met_at_19_real(tmp_path):
     assert report["gate"]["threshold"] == GATE_THRESHOLD_FLOOR
 
 
-def test_gate_met_at_20_real(tmp_path):
+def test_20_real_unadjudicated_no_longer_meet_gate(tmp_path):
+    """readiness/v3: real PRs without founder adjudication never meet the
+    gate. The v2 reading (met at 20 real PRs) stays visible as the
+    non-authoritative superseded criterion. Adjudicated cases:
+    test_qualification_gate.py."""
     write_real_prs(tmp_path, 20)
     report = _report(_ledger(tmp_path))
     assert report["real_pr_count"] == 20
-    assert report["gate"]["met"] is True
+    assert report["qualifying_real_pr_count"] == 20
+    assert report["adjudicated_qualifying_real_pr_count"] == 0
+    assert report["gate"]["met"] is False
+    assert report["gate"]["superseded_criterion"]["met"] is True
 
 
 def test_synthetic_prs_excluded_and_never_meet_gate(tmp_path):
@@ -527,7 +537,10 @@ def test_prior_ledger_inputs_all_present_keeps_earlier_samples(tmp_path):
     ledger = aggregate(archive, generated_at=TS, prior_ledger=prior)
     assert local_validation_errors("qualification-ledger", ledger) == []
     assert ledger["counts"]["entries"] == 20
-    assert _report(ledger)["gate"]["met"] is True
+    report = _report(ledger)
+    assert report["real_pr_count"] == 20
+    assert report["gate"]["superseded_criterion"]["met"] is True
+    assert report["gate"]["met"] is False  # v3: none of the 20 is adjudicated
 
 
 def test_prior_ledger_input_missing_fails_closed(tmp_path):
