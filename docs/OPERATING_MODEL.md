@@ -125,6 +125,27 @@ repository name, PR numbers, SHAs, risk classes and blocking reasons, so
   `faraday-build/faraday-review-qualification` repository, with only counts
   and hashes published here) is **a founder decision and is not created
   by this code**. Until it is made, enroll public repositories only.
+- **Diagnostics never echo input values** (founder ruling O3, Codex P2 on #11).
+  Schema failures that are persisted into ledger/readiness anomalies, or
+  printed to stderr by `collect`, `aggregate`, `readiness`, `adjudicate` and
+  `reproduce`, carry only a value-free location and the failed validator
+  keyword. Unrecognised keys are masked as `<key>`, so a private repository
+  identity in an invalid enrollment, manifest, telemetry event,
+  adjudication record, prior ledger or synthetic list never reaches a
+  committed report or a CI log.
+- **Residual risk disposition.** Archive-path messages from `collect`
+  (`... exists with different bytes`, `refusing non-regular destination`) name
+  the archive path. Inside a private archive that path contains
+  `<owner>/<repo>`. Disposition:
+  - `collect`, `aggregate` and `readiness` are operator commands and are not
+    wired into any workflow.
+  - The only qualification step in CI (`qualification-reproducible`) reads
+    committed, O3-guarded public files.
+  - The `shadow-run` and `record-failure` messages concern only the caller's
+    own PR and appear only in that caller's own CI log.
+  - **Never run `collect` with a private enrollment or `--private-archive-dir`
+    in a public CI log.** Run it in a private environment, as the private
+    archive requires anyway.
 
 Adjudications are matched on the founder `node_id` (`U_kgDODk3msA`),
 never login, at both `adjudicate` and `aggregate` time; rejected label

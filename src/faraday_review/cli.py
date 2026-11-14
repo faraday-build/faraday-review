@@ -52,7 +52,7 @@ from .telemetry.qualification import (
     QualificationError,
     aggregate,
     file_evidence,
-    local_validation_errors,
+    persisted_local_diagnostics,
     readiness,
     require_timestamp,
 )
@@ -436,7 +436,7 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 def _write_validated(path: Path, obj, schema: str, command: str,
                      enrollment: str | None = None, public_check: bool = False) -> int:
-    errors = local_validation_errors(schema, obj)
+    errors = persisted_local_diagnostics(schema, obj)
     if errors:
         print(f"{command}: output fails {schema} schema: {errors[:3]}", file=sys.stderr)
         return 2
@@ -469,7 +469,7 @@ def _cmd_adjudicate(args) -> int:
         founder_node_id=args.founder_node_id,
         labeled_at=args.labeled_at,
     )
-    errors = local_validation_errors("founder-adjudication-record", record)
+    errors = persisted_local_diagnostics("founder-adjudication-record", record)
     if errors:
         print(f"adjudicate: record fails schema: {errors[:3]}", file=sys.stderr)
         return 2

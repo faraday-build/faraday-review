@@ -40,7 +40,7 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from ..canonical import canonical_bytes
-from ..evidence.schema_validation import validation_errors
+from ..evidence.schema_validation import _validator as _vendored_validator
 from ..fingerprints import run_fingerprint
 from ..governance.escalation import RELEASED_REVIEW_REQUIREMENTS, RISK_CLASSES
 from .adjudication import ADJUDICATIONS_FILE, VALID_CLASSIFICATIONS
@@ -142,12 +142,47 @@ def local_validation_errors(name: str, instance: Any) -> list[str]:
     )
 
 
+# Diagnostics persisted into ledger/readiness anomalies must never echo input
+# values: jsonschema messages embed the rejected instance (for example a
+# repository object), which would carry a private identity past the O3
+# public-identity check (Codex P2 on #11, r22). Persisted diagnostics keep
+# only a value-free location and the failed validator keyword. Unrecognised
+# keys in the location are masked.
+_SAFE_DIAGNOSTIC_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
+def _value_free(errors) -> list[str]:
+    out = []
+    for e in errors:
+        parts = []
+        for p in e.absolute_path:
+            if isinstance(p, int):
+                parts.append(str(p))
+            elif isinstance(p, str) and _SAFE_DIAGNOSTIC_KEY.match(p):
+                parts.append(p)
+            else:
+                parts.append("<key>")
+        out.append(f"{'/'.join(parts) or '<root>'}: {e.validator} constraint violated")
+    return sorted(out)
+
+
+def persisted_local_diagnostics(name: str, instance: Any) -> list[str]:
+    """Value-free schema diagnostics against a repo-local schema, safe to
+    persist in qualification outputs."""
+    return _value_free(_local_validator(name).iter_errors(instance))
+
+
+def persisted_event_diagnostics(instance: Any) -> list[str]:
+    """Value-free diagnostics for a review-telemetry event (vendored schema)."""
+    return _value_free(_vendored_validator("review-telemetry-event").iter_errors(instance))
+
+
 # ---------------------------------------------------------------- helpers
 
 
 def require_timestamp(value: str, what: str) -> str:
     if _aware(value) is None:
-        raise QualificationError(f"{what}: not a timezone-aware ISO-8601 timestamp: {value!r}")
+        raise QualificationError(f"{what}: not a timezone-aware ISO-8601 timestamp (value withheld)")
     return value
 
 
@@ -582,8 +617,8 @@ def _prior_inputs(prior_ledger: dict[str, Any], founder_node_id: str) -> set[tup
     if schema is None:
         raise QualificationError(
             f"prior ledger fails qualification-ledger schema: format "
-            f"{prior_ledger.get('format')!r} is neither {LEDGER_FORMAT} nor {LEDGER_FORMAT_V1}")
-    errors = local_validation_errors(schema, prior_ledger)
+            f"(value withheld) is neither {LEDGER_FORMAT} nor {LEDGER_FORMAT_V1}")
+    errors = persisted_local_diagnostics(schema, prior_ledger)
     if errors:
         raise QualificationError(f"prior ledger fails {schema} schema: {errors[:3]}")
     if prior_ledger.get("founder_node_id") != founder_node_id:
@@ -596,7 +631,7 @@ def _load_manifest(path: Path, rel: str, anomalies: list[dict[str, Any]]) -> dic
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
         manifest = None
-    errors = (local_validation_errors("qualification-collection-manifest", manifest)
+    errors = (persisted_local_diagnostics("qualification-collection-manifest", manifest)
               if manifest is not None else ["not JSON"])
     if not errors and _aware(manifest.get("collected_at")) is None:
         errors = ["collected_at: not a timezone-aware ISO-8601 timestamp"]
@@ -748,7 +783,7 @@ def aggregate(input_dir: Path, *, generated_at: str,
                     anomalies.append({"kind": "malformed_decision",
                                       "source": decision_path.relative_to(input_dir).as_posix()})
             for lineno, event in _read_jsonl(path, rel, anomalies):
-                errors = validation_errors("review-telemetry-event", event)
+                errors = persisted_event_diagnostics(event)
                 if not errors and _aware(event.get("created_at")) is None:
                     errors = ["created_at: not a timezone-aware ISO-8601 timestamp"]
                 if errors:
@@ -764,7 +799,7 @@ def aggregate(input_dir: Path, *, generated_at: str,
                 raw_runs.append((_run_record(event, decision, rel, anomalies), rel))
         elif path.name == ADJUDICATIONS_FILE:
             for lineno, record in _read_jsonl(path, rel, anomalies):
-                errors = local_validation_errors("founder-adjudication-record", record)
+                errors = persisted_local_diagnostics("founder-adjudication-record", record)
                 if not errors and _aware(record.get("labeled_at")) is None:
                     errors = ["labeled_at: not a timezone-aware ISO-8601 timestamp"]
                 if errors:
@@ -1156,10 +1191,10 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
     if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < GATE_THRESHOLD_FLOOR:
         raise QualificationError(
             f"gate threshold {threshold!r} rejected: hard floor is {GATE_THRESHOLD_FLOOR}")
-    errors = local_validation_errors("qualification-ledger", ledger)
+    errors = persisted_local_diagnostics("qualification-ledger", ledger)
     if errors:
         raise QualificationError(f"ledger fails schema: {errors[:3]}")
-    errors = local_validation_errors("synthetic-prs", synthetic)
+    errors = persisted_local_diagnostics("synthetic-prs", synthetic)
     if errors:
         raise QualificationError(f"synthetic list fails schema: {errors[:3]}")
 

@@ -35,7 +35,7 @@ from ..telemetry.qualification import (
     COLLECTION_MANIFEST_FORMAT,
     COLLECTION_MANIFEST_PREFIX,
     ARCHIVED_FILES,
-    local_validation_errors,
+    persisted_local_diagnostics,
     repo_identity,
     require_timestamp,
 )
@@ -59,7 +59,7 @@ def load_enrollment(path: Path) -> list[dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise CollectionError(f"cannot read enrollment {path}: {exc}") from exc
-    errors = local_validation_errors("qualification-enrollment", data)
+    errors = persisted_local_diagnostics("qualification-enrollment", data)
     if errors:
         raise CollectionError(f"enrollment fails schema: {errors[:3]}")
     seen: set[str] = set()
@@ -455,7 +455,7 @@ def collect(client: GitHubClient, enrollment: list[dict[str, Any]], *, public_ar
     for root, repos in per_root.items():
         manifest = {"format": COLLECTION_MANIFEST_FORMAT, "collected_at": collected_at,
                     "repositories": sorted(repos, key=lambda r: repo_identity(r["repository"]))}
-        errors = local_validation_errors("qualification-collection-manifest", manifest)
+        errors = persisted_local_diagnostics("qualification-collection-manifest", manifest)
         if errors:
             raise CollectionError(f"manifest fails schema: {errors[:3]}")
         path = root / f"{COLLECTION_MANIFEST_PREFIX}{stamp}.json"
