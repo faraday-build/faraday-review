@@ -35,7 +35,7 @@ from .evidence.serialization import write_context, write_evidence
 from .fingerprints import evidence_fingerprint, run_fingerprint
 from .github.budget import RequestBudget
 from .github.client import GitHubClient
-from .github.collection import CollectionError, collect, load_enrollment
+from .github.collection import CollectionError, check_public_destination, collect, load_enrollment
 from .github.preflight import RELEASED_POLICY_DIGEST, preflight
 from .github.pr_context import collect_context, fetch_head_sha
 from .github.publisher import publish_check_run, publish_summary_comment
@@ -52,7 +52,7 @@ from .telemetry.qualification import (
     QualificationError,
     aggregate,
     file_evidence,
-    local_validation_errors,
+    persisted_local_diagnostics,
     readiness,
     require_timestamp,
 )
@@ -434,11 +434,18 @@ _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
-def _write_validated(path: Path, obj, schema: str, command: str) -> int:
-    errors = local_validation_errors(schema, obj)
+def _write_validated(path: Path, obj, schema: str, command: str,
+                     enrollment: str | None = None, public_check: bool = False) -> int:
+    errors = persisted_local_diagnostics(schema, obj)
     if errors:
         print(f"{command}: output fails {schema} schema: {errors[:3]}", file=sys.stderr)
         return 2
+    if public_check:
+        try:
+            check_public_destination(path, obj, Path(enrollment) if enrollment else None)
+        except CollectionError as exc:
+            print(f"{command}: {exc.reason}: {exc}", file=sys.stderr)
+            return 2
     path.parent.mkdir(parents=True, exist_ok=True)
     write_canonical(path, obj)
     return 0
@@ -462,7 +469,7 @@ def _cmd_adjudicate(args) -> int:
         founder_node_id=args.founder_node_id,
         labeled_at=args.labeled_at,
     )
-    errors = local_validation_errors("founder-adjudication-record", record)
+    errors = persisted_local_diagnostics("founder-adjudication-record", record)
     if errors:
         print(f"adjudicate: record fails schema: {errors[:3]}", file=sys.stderr)
         return 2
@@ -539,7 +546,8 @@ def _cmd_aggregate(args) -> int:
             raise QualificationError("prior ledger is not a JSON object")
     ledger = aggregate(Path(args.input_dir), generated_at=args.generated_at,
                        founder_node_id=args.founder_node_id, prior_ledger=prior)
-    code = _write_validated(Path(args.output), ledger, "qualification-ledger", "aggregate")
+    code = _write_validated(Path(args.output), ledger, "qualification-ledger", "aggregate",
+                            enrollment=args.enrollment, public_check=True)
     if code == 0:
         print(f"aggregate: {ledger['counts']} anomalies={len(ledger['anomalies'])}", file=sys.stderr)
     return code
@@ -559,13 +567,17 @@ def _cmd_readiness(args) -> int:
         ledger_evidence=file_evidence(ledger_path),
         synthetic_evidence=file_evidence(synthetic_path),
     )
-    code = _write_validated(Path(args.output), report, "qualification-readiness", "readiness")
+    code = _write_validated(Path(args.output), report, "qualification-readiness", "readiness",
+                            enrollment=args.enrollment, public_check=True)
     if code == 0:
         print(f"readiness: adjudicated_qualifying_real_pr_count="
               f"{report['adjudicated_qualifying_real_pr_count']} "
               f"qualifying_real_pr_count={report['qualifying_real_pr_count']} "
               f"real_pr_count={report['real_pr_count']} "
-              f"threshold={report['gate']['threshold']} met={report['gate']['met']} "
+              f"threshold={report['gate']['threshold']} "
+              f"escalation_condition={report['gate']['escalation_condition']['status']} "
+              f"missed_escalations={report['escalation_accuracy']['missed_escalations']} "
+              f"met={report['gate']['met']} "
               f"(criterion {report['gate']['criterion_status']})",
               file=sys.stderr)
     return code
@@ -645,6 +657,10 @@ def main(argv: list[str] | None = None) -> int:
     agg.add_argument("--founder-node-id", default=DEFAULT_FOUNDER_NODE_ID)
     agg.add_argument("--prior-ledger", default=None,
                      help="previously committed ledger; every input it recorded must be present again")
+    agg.add_argument("--enrollment", default=None,
+                     help="enrollment declaring which repositories are public; checked when "
+                          "--output is inside a git checkout (default: its "
+                          "docs/qualification/enrollment.json)")
 
     rdy = sub.add_parser("readiness", help="Phase 1 qualification gate report from a ledger")
     rdy.add_argument("--ledger", required=True)
@@ -656,6 +672,10 @@ def main(argv: list[str] | None = None) -> int:
     rdy.add_argument("--released-policy-digest", action="append", default=None,
                      help="governance-released digest a counted run must use (repeatable); "
                           "default: the governance v1.1.0 release")
+    rdy.add_argument("--enrollment", default=None,
+                     help="enrollment declaring which repositories are public; checked when "
+                          "--output is inside a git checkout (default: its "
+                          "docs/qualification/enrollment.json)")
 
     args = parser.parse_args(argv)
     qualification = {"adjudicate": _cmd_adjudicate, "aggregate": _cmd_aggregate,

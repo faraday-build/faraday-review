@@ -20,7 +20,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from qualification_support import DIGEST_B, REPO, write_label, write_real_prs, write_run
+from qualification_support import DIGEST_A, DIGEST_B, REPO, write_label, write_real_prs, write_run
 
 from faraday_review.canonical import canonical_bytes
 from faraday_review.telemetry import qualification as q
@@ -35,6 +35,8 @@ TS = "2026-11-12T00:00:00Z"
 EVIDENCE = {"name": "x.json", "sha256": "sha256:" + "0" * 64}
 SYNTH_REPO = "faraday-build/sandbox"
 GOVERNANCE = Path(__file__).resolve().parents[2] / "src" / "faraday_review" / "governance"
+# O2 truth for the fixture digest (same shape as the governance-pinned table).
+REQUIREMENTS = {DIGEST_A: {"green": False, "yellow": True, "red": True, "block": True}}
 EXCLUSION_KINDS = ("incomplete", "unknown", "misconfigured", "refused",
                    "infrastructure_blocked", "policy_digest_unverified", "unadjudicated")
 
@@ -43,7 +45,8 @@ def _report(root: Path, synthetic: list | None = None, threshold: int = 20) -> d
     ledger = aggregate(root, generated_at=TS)
     assert local_validation_errors("qualification-ledger", ledger) == []
     report = readiness(ledger, synthetic or [], generated_at=TS, ledger_evidence=EVIDENCE,
-                       synthetic_evidence=EVIDENCE, threshold=threshold)
+                       synthetic_evidence=EVIDENCE, threshold=threshold,
+                       review_requirements=REQUIREMENTS)
     assert local_validation_errors("qualification-readiness", report) == []
     return report
 
@@ -115,9 +118,12 @@ def test_gate_met_at_20_adjudicated_qualifying(tmp_path):
     assert report["adjudicated_qualifying_real_pr_count"] == 20
     assert report["gate"] == {
         "threshold": 20,
-        "criterion": "adjudicated_qualifying_real_pr_count >= threshold",
+        "criterion": ("adjudicated_qualifying_real_pr_count >= threshold "
+                      "AND escalation_condition.status == pass"),
         "criterion_status": "founder_confirmed",
         "released_policy_digests": None,
+        "escalation_condition": {"status": "pass", "missed": 0, "mandatory_total": 20,
+                                 "unknown": 0},
         "met": True,
         "superseded_criterion": {"criterion": "real_pr_count >= threshold", "met": True,
                                  "authoritative": False},
@@ -466,9 +472,9 @@ def test_reason_table_categories_and_documentation(tmp_path):
         assert f"| `{reason}` | {category} |" in doc, reason
 
 
-def test_report_format_is_v3(tmp_path):
+def test_report_format_is_v4(tmp_path):
     _adjudicated_prs(tmp_path, [1])
-    assert _report(tmp_path)["format"] == "faraday-review/qualification-readiness/v3"
+    assert _report(tmp_path)["format"] == "faraday-review/qualification-readiness/v4"
     assert GATE_THRESHOLD_FLOOR == 20
 
 

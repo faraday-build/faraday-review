@@ -255,9 +255,14 @@ def test_threshold_floor_cli_exit_2(tmp_path):
     assert not out.exists()
     assert main([*base, "--threshold", "25"]) == 0
     assert read_canonical(out)["gate"] == {
-        "threshold": 25, "criterion": "adjudicated_qualifying_real_pr_count >= threshold",
+        "threshold": 25,
+        "criterion": ("adjudicated_qualifying_real_pr_count >= threshold "
+                      "AND escalation_condition.status == pass"),
         "criterion_status": "founder_confirmed",
-        "released_policy_digests": [RELEASED_POLICY_DIGEST], "met": False,
+        "released_policy_digests": [RELEASED_POLICY_DIGEST],
+        "escalation_condition": {"status": "unknown", "missed": 0, "mandatory_total": 0,
+                                 "unknown": 0},
+        "met": False,
         "superseded_criterion": {"criterion": "real_pr_count >= threshold", "met": False,
                                  "authoritative": False}}
 
@@ -337,8 +342,13 @@ def test_agreement_confusion_and_latency(tmp_path):
     assert report["founder_latency"]["all_adjudicated"] == {
         "n": 3, "median_seconds": 1800.0, "p90_seconds": 3600.0}
     assert report["founder_latency"]["escalated_only"]["n"] == 2
-    assert report["escalation"]["escalated_count"] == 3
-    assert report["escalation"]["api_budget_exceeded_escalations"] == 1
+    # O1: escalation volume covers the gate population (PR 4 is
+    # infrastructure_blocked); the pre-O1 all-real-PR figures are context.
+    assert report["escalation"]["escalated_count"] == 2
+    assert report["escalation"]["api_budget_exceeded_escalations"] == 0
+    assert report["context_all_real_prs"]["escalation"]["escalated_count"] == 3
+    assert report["context_all_real_prs"]["escalation"]["api_budget_exceeded_escalations"] == 1
+    assert report["context_all_adjudicated"]["agreement"] == ag
     assert report["drift"]["infrastructure_failures"]["api_budget_exceeded_runs"] == 1
 
 

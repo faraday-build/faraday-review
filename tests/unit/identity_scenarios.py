@@ -62,8 +62,10 @@ def gate_view(report: dict) -> dict:
         "counted_prs": [{k: p[k] for k in _V2_COUNTED_FIELDS} for p in report["counted_prs"]],
         "synthetic_excluded": report["synthetic_excluded"],
         "adjudicated_count": report["adjudicated_count"],
-        "agreement": report["agreement"],
-        "escalation": report["escalation"],
+        # readiness/v4 (O1) moved the headline metrics onto the gate
+        # population; the pre-O1 figures this baseline froze are the context.
+        "agreement": report["context_all_adjudicated"]["agreement"],
+        "escalation": report["context_all_real_prs"]["escalation"],
         "gate": {"threshold": gate["threshold"],
                  "criterion": gate["superseded_criterion"]["criterion"],
                  "met": gate["superseded_criterion"]["met"]},

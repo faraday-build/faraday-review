@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://faraday-lab.dev/schemas/local/qualification-readiness.schema.json",
   "title": "QualificationReadiness",
-  "description": "Output of `faraday-review readiness` (qualification-readiness/v3): the machine-readable Phase 1 gate report derived from a QualificationLedger. gate.met is adjudicated_qualifying_real_pr_count >= gate.threshold; the threshold has a hard floor of 20 and the criterion (including D9 released-digest binding) was confirmed by the founder on 2026-11-14. real_pr_count keeps its v2 meaning and the v2 criterion is reported as gate.superseded_criterion, never authoritative. Synthetic PRs never count.",
+  "description": "Output of `faraday-review readiness` (qualification-readiness/v4): the machine-readable Phase 1 gate report derived from a QualificationLedger. gate.met is adjudicated_qualifying_real_pr_count >= gate.threshold AND gate.escalation_condition.status == pass; the threshold has a hard floor of 20. The count criterion (including D9 released-digest binding) was confirmed by the founder on 2026-11-14; the same ruling (O1, O2+gate) computes agreement, escalation and founder_latency over the adjudicated qualifying PRs, adds escalation_accuracy and the escalation condition, and keeps the pre-O1 figures under context_all_adjudicated / context_all_real_prs, never gating. real_pr_count keeps its v2 meaning and the v2 criterion is reported as gate.superseded_criterion, never authoritative. Synthetic PRs never count.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["format", "generated_at", "real_pr_count", "qualifying_real_pr_count", "adjudicated_qualifying_real_pr_count", "qualification", "counted_prs", "synthetic_excluded", "adjudicated_count", "agreement", "escalation", "founder_latency", "drift", "anomalies", "evidence", "gate"],
+  "required": ["format", "generated_at", "real_pr_count", "qualifying_real_pr_count", "adjudicated_qualifying_real_pr_count", "qualification", "counted_prs", "synthetic_excluded", "adjudicated_count", "agreement", "escalation", "escalation_accuracy", "founder_latency", "context_all_adjudicated", "context_all_real_prs", "drift", "anomalies", "evidence", "gate"],
   "$defs": {
     "class": { "enum": ["green", "yellow", "red", "block"] },
     "count": { "type": "integer", "minimum": 0 },
@@ -32,6 +32,73 @@
         "p90_seconds": { "type": ["number", "null"], "minimum": 0 }
       }
     },
+    "rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "agreement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compared", "agree", "disagree", "agreement_rate", "confusion_matrix", "direction", "disagreements"],
+      "properties": {
+        "compared": { "$ref": "#/$defs/count" },
+        "agree": { "$ref": "#/$defs/count" },
+        "disagree": { "$ref": "#/$defs/count" },
+        "agreement_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "confusion_matrix": {
+          "description": "Rows: classifier_class. Columns: founder_classification.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["green", "yellow", "red", "block"],
+          "properties": {
+            "green": { "$ref": "#/$defs/row" }, "yellow": { "$ref": "#/$defs/row" },
+            "red": { "$ref": "#/$defs/row" }, "block": { "$ref": "#/$defs/row" }
+          }
+        },
+        "direction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["over_escalation", "under_escalation"],
+          "properties": {
+            "over_escalation": { "$ref": "#/$defs/count" },
+            "under_escalation": { "$ref": "#/$defs/count" }
+          }
+        },
+        "disagreements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repository", "pr_number", "head_sha", "classifier_class", "founder_classification", "direction"],
+            "properties": {
+              "repository": { "$ref": "#/$defs/repository" },
+              "pr_number": { "type": "integer", "minimum": 1 },
+              "head_sha": { "type": "string" },
+              "classifier_class": { "$ref": "#/$defs/class" },
+              "founder_classification": { "$ref": "#/$defs/class" },
+              "direction": { "enum": ["over_escalation", "under_escalation"] }
+            }
+          }
+        }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["escalated_count", "classifier_class_distribution", "pr_too_large_escalations", "api_budget_exceeded_escalations"],
+      "properties": {
+        "escalated_count": { "$ref": "#/$defs/count" },
+        "classifier_class_distribution": { "$ref": "#/$defs/row" },
+        "pr_too_large_escalations": { "$ref": "#/$defs/count" },
+        "api_budget_exceeded_escalations": { "$ref": "#/$defs/count" }
+      }
+    },
+    "latency_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["all_adjudicated", "escalated_only"],
+      "properties": {
+        "all_adjudicated": { "$ref": "#/$defs/latency" },
+        "escalated_only": { "$ref": "#/$defs/latency" }
+      }
+    },
     "file": {
       "type": "object",
       "additionalProperties": false,
@@ -40,7 +107,7 @@
     }
   },
   "properties": {
-    "format": { "const": "faraday-review/qualification-readiness/v3" },
+    "format": { "const": "faraday-review/qualification-readiness/v4" },
     "generated_at": { "type": "string", "format": "date-time" },
     "real_pr_count": { "$ref": "#/$defs/count", "description": "v2 definition, unchanged: distinct real (repository, PR) with a completed, fresh, identity-eligible run on the current head. Not the gate count." },
     "qualifying_real_pr_count": { "$ref": "#/$defs/count", "description": "Real PRs whose current head has at least one eligible occurrence: completed, fresh, identity-eligible, policy digest verified, a known classifier class, and no blocking reason outside the 'classification' category." },
@@ -115,72 +182,81 @@
         }
       }
     },
-    "adjudicated_count": { "$ref": "#/$defs/count" },
-    "agreement": {
+    "adjudicated_count": { "$ref": "#/$defs/count", "description": "Counted real PRs with a founder adjudication on the counted head, qualifying or not (context; equals context_all_adjudicated.adjudicated_count)." },
+    "agreement": { "$ref": "#/$defs/agreement", "description": "Over the adjudicated qualifying PRs (the gate population), scoring the D10 occurrence (O1)." },
+    "escalation": { "$ref": "#/$defs/escalation", "description": "Over the adjudicated qualifying PRs, from the D10 scored occurrence (O1). pr_too_large and api_budget counts stay separate." },
+    "escalation_accuracy": {
+      "description": "O2 over the adjudicated qualifying PRs. Truth: the founder's adjudicated class requires founder review under the policy digest the scored occurrence was evaluated under (governance-pinned table). Prediction: the scored occurrence's recorded escalation. A PR with either undeterminable is unknown. Rates are null, never 0, when their denominator is 0.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["compared", "agree", "disagree", "agreement_rate", "confusion_matrix", "direction", "disagreements"],
+      "required": ["population", "matrix", "mandatory_escalations", "missed_escalations", "missed_escalation_prs", "unknown", "unknown_prs", "escalation_recall", "escalation_precision", "unnecessary_escalation_rate", "policy_digests_mapped"],
       "properties": {
-        "compared": { "$ref": "#/$defs/count" },
-        "agree": { "$ref": "#/$defs/count" },
-        "disagree": { "$ref": "#/$defs/count" },
-        "agreement_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
-        "confusion_matrix": {
-          "description": "Rows: classifier_class. Columns: founder_classification.",
+        "population": { "const": "adjudicated_qualifying" },
+        "matrix": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["green", "yellow", "red", "block"],
+          "required": ["true_escalation", "unnecessary_escalation", "missed_escalation", "true_non_escalation"],
           "properties": {
-            "green": { "$ref": "#/$defs/row" }, "yellow": { "$ref": "#/$defs/row" },
-            "red": { "$ref": "#/$defs/row" }, "block": { "$ref": "#/$defs/row" }
+            "true_escalation": { "$ref": "#/$defs/count" }, "unnecessary_escalation": { "$ref": "#/$defs/count" },
+            "missed_escalation": { "$ref": "#/$defs/count" }, "true_non_escalation": { "$ref": "#/$defs/count" }
           }
         },
-        "direction": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["over_escalation", "under_escalation"],
-          "properties": {
-            "over_escalation": { "$ref": "#/$defs/count" },
-            "under_escalation": { "$ref": "#/$defs/count" }
-          }
-        },
-        "disagreements": {
+        "mandatory_escalations": { "$ref": "#/$defs/count", "description": "true_escalation + missed_escalation: PRs whose adjudicated class requires founder review." },
+        "missed_escalations": { "$ref": "#/$defs/count" },
+        "missed_escalation_prs": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["repository", "pr_number", "head_sha", "classifier_class", "founder_classification", "direction"],
+            "required": ["repository", "pr_number", "head_sha", "classifier_class", "founder_classification"],
             "properties": {
               "repository": { "$ref": "#/$defs/repository" },
               "pr_number": { "type": "integer", "minimum": 1 },
               "head_sha": { "type": "string" },
-              "classifier_class": { "$ref": "#/$defs/class" },
-              "founder_classification": { "$ref": "#/$defs/class" },
-              "direction": { "enum": ["over_escalation", "under_escalation"] }
+              "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] },
+              "founder_classification": { "$ref": "#/$defs/class" }
             }
           }
-        }
+        },
+        "unknown": { "$ref": "#/$defs/count" },
+        "unknown_prs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repository", "pr_number", "head_sha", "reason"],
+            "properties": {
+              "repository": { "$ref": "#/$defs/repository" },
+              "pr_number": { "type": "integer", "minimum": 1 },
+              "head_sha": { "type": "string" },
+              "reason": { "enum": ["policy_mapping_unknown", "prediction_unknown"] }
+            }
+          }
+        },
+        "escalation_recall": { "$ref": "#/$defs/rate", "description": "true_escalation / mandatory_escalations." },
+        "escalation_precision": { "$ref": "#/$defs/rate", "description": "true_escalation / (true_escalation + unnecessary_escalation)." },
+        "unnecessary_escalation_rate": { "$ref": "#/$defs/rate", "description": "unnecessary_escalation / (unnecessary_escalation + true_non_escalation): share of PRs not requiring founder review that were escalated anyway (founder throughput cost)." },
+        "policy_digests_mapped": { "type": "array", "items": { "$ref": "#/$defs/digest" } }
       }
     },
-    "escalation": {
+    "founder_latency": { "$ref": "#/$defs/latency_pair", "description": "Over the adjudicated qualifying PRs (O1); escalated_only uses the scored occurrence's escalation." },
+    "context_all_adjudicated": {
+      "description": "Pre-O1 figures over every adjudicated counted PR, qualifying or not. Context only; never used by the gate.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["escalated_count", "classifier_class_distribution", "pr_too_large_escalations", "api_budget_exceeded_escalations"],
+      "required": ["adjudicated_count", "agreement", "founder_latency"],
       "properties": {
-        "escalated_count": { "$ref": "#/$defs/count" },
-        "classifier_class_distribution": { "$ref": "#/$defs/row" },
-        "pr_too_large_escalations": { "$ref": "#/$defs/count" },
-        "api_budget_exceeded_escalations": { "$ref": "#/$defs/count" }
+        "adjudicated_count": { "$ref": "#/$defs/count" },
+        "agreement": { "$ref": "#/$defs/agreement" },
+        "founder_latency": { "$ref": "#/$defs/latency_pair" }
       }
     },
-    "founder_latency": {
+    "context_all_real_prs": {
+      "description": "Pre-O1 escalation volume over every counted real PR (its representative run). Context only; never used by the gate.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["all_adjudicated", "escalated_only"],
-      "properties": {
-        "all_adjudicated": { "$ref": "#/$defs/latency" },
-        "escalated_only": { "$ref": "#/$defs/latency" }
-      }
+      "required": ["escalation"],
+      "properties": { "escalation": { "$ref": "#/$defs/escalation" } }
     },
     "drift": {
       "type": "object",
@@ -244,16 +320,28 @@
     "gate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["threshold", "criterion", "criterion_status", "released_policy_digests", "met",
+      "required": ["threshold", "criterion", "criterion_status", "released_policy_digests", "escalation_condition", "met",
                    "superseded_criterion"],
       "properties": {
         "threshold": { "type": "integer", "minimum": 20 },
-        "criterion": { "const": "adjudicated_qualifying_real_pr_count >= threshold" },
+        "criterion": { "const": "adjudicated_qualifying_real_pr_count >= threshold AND escalation_condition.status == pass" },
         "criterion_status": { "const": "founder_confirmed" },
         "released_policy_digests": {
           "description": "Governance-released policy digests a counted run must have been evaluated under; any other verified digest is misconfigured. null = not enforced (library default only; the CLI always enforces).",
           "type": ["array", "null"],
           "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        },
+        "escalation_condition": {
+          "description": "O2 gate condition over the adjudicated qualifying PRs. pass: missed == 0 AND unknown == 0 AND mandatory_total > 0. fail: missed > 0. unknown: otherwise; an unknown or zero denominator never passes.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "missed", "mandatory_total", "unknown"],
+          "properties": {
+            "status": { "enum": ["pass", "fail", "unknown"] },
+            "missed": { "$ref": "#/$defs/count" },
+            "mandatory_total": { "$ref": "#/$defs/count" },
+            "unknown": { "$ref": "#/$defs/count" }
+          }
         },
         "met": { "type": "boolean" },
         "superseded_criterion": {

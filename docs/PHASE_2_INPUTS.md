@@ -98,7 +98,7 @@ failure counts, anomalies, and the sha256 of every input file. Schemas:
 When the operator commits a ledger + readiness report, update the table
 above from `readiness.json` in the same PR.
 
-## Gate criterion (qualification-readiness/v3)
+## Gate criterion (qualification-readiness/v4)
 
 > **Confirmed by the founder on 2026-11-14** (GHO-AUTONOMOUS-PRODUCTION-006
 > qualification policy ruling: D1–D10 and J1 accepted as documented). The
@@ -109,15 +109,17 @@ above from `readiness.json` in the same PR.
 > below. It can only make the gate harder to meet; the floor stays 20 and can
 > only be raised. `gate.criterion_status` is `founder_confirmed`.
 >
-> The same ruling approved follow-up work, delivered separately and not part
-> of this criterion yet: metrics over eligible PRs with all-PR context (O1),
-> escalation-accuracy reporting with a zero-missed-mandatory-escalation
-> condition where an unknown denominator never passes (O2), and a check that
-> committed reports expose no private repository identity (O3). Rollback
-> continuity stays a manual check until the first real ledger qualifies (O4).
+> The same ruling approved three follow-ups, implemented in v4: metrics
+> over eligible PRs with all-PR context reported separately (O1),
+> escalation-accuracy reporting with a zero-missed-mandatory-escalation gate
+> condition where an unknown denominator never passes (O2 = A + gate), and a
+> check that committed reports expose no private repository identity (O3).
+> Rollback continuity stays a manual check until the first real ledger
+> qualifies (O4 = B). The 20-real-PR floor is unchanged.
 
 ```
 gate.met = adjudicated_qualifying_real_pr_count >= threshold   (threshold >= 20)
+           AND gate.escalation_condition.status == pass
 ```
 
 - `real_pr_count` keeps its v2 definition (above) and stays in the report.
@@ -182,13 +184,90 @@ never carry authorization field names.
 | `unknown_evidence_class` | refused | The evidence class is outside the accepted set; the Validator failed closed. |
 | `github_api_budget_exceeded` | infrastructure_blocked | An infrastructure fault stopped evaluation (kept separate from `pr_too_large_*`). |
 
+### Metric population (O1)
+
+`agreement`, `escalation` and `founder_latency` are computed over the
+adjudicated qualifying PRs (the gate population), each scored on its D10
+occurrence: the latest eligible occurrence on the adjudicated entry.
+`escalation.pr_too_large_escalations` and
+`escalation.api_budget_exceeded_escalations` stay separate counts (the
+latter is 0 by construction in this population, because a budget Block is
+`infrastructure_blocked`). The previous figures stay visible as context and
+never feed the gate:
+
+- `context_all_adjudicated`: `adjudicated_count`, `agreement` and
+  `founder_latency` over every adjudicated counted PR, qualifying or not
+  (the v3 definitions).
+- `context_all_real_prs.escalation`: escalation volume over every counted
+  real PR's representative run (the v3 definition).
+
+### Escalation accuracy and the escalation condition (O2)
+
+`escalation_accuracy` covers the same population. Per PR:
+
+- **truth**: the founder's adjudicated class requires founder review under
+  the policy digest the scored occurrence was evaluated under. The mapping
+  comes from the governance-pinned table
+  `governance/escalation.py:RELEASED_REVIEW_REQUIREMENTS` (today, for the
+  released digest: green no; yellow, red and block yes). A test derives the
+  table from the released bundle and fails if they differ. A digest with no
+  mapping makes the PR `unknown`.
+- **prediction**: the scored occurrence's recorded escalation (`escalated`
+  in the ledger's `occurrence_log`, copied from telemetry). A ledger written
+  before v4 lacks it, which also makes the PR `unknown`.
+
+| | prediction: escalated | prediction: not escalated |
+|---|---|---|
+| **truth: review required** | `true_escalation` | `missed_escalation` |
+| **truth: not required** | `unnecessary_escalation` | `true_non_escalation` |
+
+Reported: the four cells (`matrix`), `mandatory_escalations`
+(true + missed), `missed_escalations` with `missed_escalation_prs`,
+`unknown` with `unknown_prs`, `escalation_recall` (true / mandatory),
+`escalation_precision` (true / escalated) and `unnecessary_escalation_rate`
+(unnecessary / not required). A rate is `null`, never 0, when its
+denominator is 0. Precision and the unnecessary rate have no threshold.
+
+`gate.escalation_condition` = `{status, missed, mandatory_total, unknown}`:
+
+- `fail` when `missed > 0`: a PR the founder had to see would have bypassed
+  review;
+- `unknown` when `unknown > 0` or `mandatory_total == 0`: an unknown or zero
+  denominator never passes;
+- `pass` otherwise.
+
+`gate.met` requires `pass`. The condition can only make the gate stricter.
+
+### Public repository identities (O3)
+
+Committed qualification reports never name a repository that is not
+enrolled as public:
+
+- `tools/guards/public_identities.py` (run by `tests/guards`, so by the
+  `guard-self-tests` check) fails when `ledger.json`, `readiness.json` or any
+  `collection-manifest-*.json` under `docs/qualification/` names a
+  repository that `docs/qualification/enrollment.json` does not declare
+  `public`. A missing or unreadable file fails closed.
+- `aggregate` and `readiness` refuse (exit 2) to write such a report when
+  `--output` is inside a git checkout, using `--enrollment` (default: the
+  checkout's `docs/qualification/enrollment.json`). Outside a checkout (the
+  private side) nothing is checked.
+- Neither prints the identity it refuses. Identities are read from the
+  `repository`, `caller_repo` and `repository_spellings` fields, and from
+  archive provenance paths (`path`, `source`, `sources`): `collect` lays the
+  archive out as `<owner>/<repo>/<run>/...`, so a path names its repository
+  by its first two components. A path whose repository cannot be
+  established (other than a root `collection-manifest-*.json`) fails closed.
+- An occurrence whose telemetry omits the escalation field has no recorded
+  `escalated` in the ledger; its O2 prediction is `unknown`, never false.
+
 Known limits, unchanged by v3: "policy digest verified" means the digest is
 consistent with the run's own `decision.json` and, with no
 `policy_digest_unpinned` / `policy_digest_mismatch` reason, that the run was
 evaluated against the pin it was given; readiness does not compare it with a
 release digest (drift is reported in `drift.policy_bundle_digests`).
-`agreement`, `escalation` and `founder_latency` are still computed over the
-`real_pr_count` runs, as in v2.
+Since v4, `agreement`, `escalation` and `founder_latency` cover the gate
+population (O1, above).
 
 ## Miss patterns (deterministic classification vs founder adjudication)
 

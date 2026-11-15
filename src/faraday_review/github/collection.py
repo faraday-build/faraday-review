@@ -35,7 +35,7 @@ from ..telemetry.qualification import (
     COLLECTION_MANIFEST_FORMAT,
     COLLECTION_MANIFEST_PREFIX,
     ARCHIVED_FILES,
-    local_validation_errors,
+    persisted_local_diagnostics,
     repo_identity,
     require_timestamp,
 )
@@ -59,7 +59,7 @@ def load_enrollment(path: Path) -> list[dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise CollectionError(f"cannot read enrollment {path}: {exc}") from exc
-    errors = local_validation_errors("qualification-enrollment", data)
+    errors = persisted_local_diagnostics("qualification-enrollment", data)
     if errors:
         raise CollectionError(f"enrollment fails schema: {errors[:3]}")
     seen: set[str] = set()
@@ -70,6 +70,98 @@ def load_enrollment(path: Path) -> list[dict[str, Any]]:
                                   "(identity is case-insensitive)")
         seen.add(key)
     return data
+
+
+# Keys whose values name a repository in qualification outputs (ledger,
+# readiness, collection manifest, anomalies). Founder ruling 2026-11-14, O3.
+_IDENTITY_KEYS = ("repository", "caller_repo")
+_IDENTITY_LIST_KEYS = ("repository_spellings",)
+# Archive-relative provenance paths (inputs[].path, files[].path, anomaly
+# source/sources). `collect` lays the archive out as <owner>/<repo>/<run>/...,
+# so such a path names its repository too (Codex P2, #11).
+_PATH_KEYS = ("path", "source", "sources")
+_ROOT_MANIFEST_RE = re.compile(r"^collection-manifest-[0-9TZ]+\.json$")
+
+
+def named_repositories(document: Any) -> list[str]:
+    """Every repository identity a JSON document names under an identity
+    key, at any depth; sorted, unique, as spelled."""
+    found: set[str] = set()
+    stack = [document]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in _IDENTITY_KEYS and isinstance(value, str):
+                    found.add(value)
+                elif key in _IDENTITY_LIST_KEYS and isinstance(value, list):
+                    found.update(v for v in value if isinstance(v, str))
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return sorted(found)
+
+
+def _provenance_paths(document: Any) -> set[str]:
+    found: set[str] = set()
+    stack = [document]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in _PATH_KEYS and isinstance(value, str):
+                    found.add(value)
+                elif key in _PATH_KEYS and isinstance(value, list) and \
+                        all(isinstance(v, str) for v in value):
+                    found.update(value)
+                else:
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
+def public_identity_violations(document: Any, enrollment: list[dict[str, Any]]) -> int:
+    """How many distinct repository identities (case-insensitive) the
+    document names that the enrollment does not declare public, plus every
+    distinct provenance path whose repository cannot be established. A
+    repository absent from the enrollment counts: nothing is public by
+    default. A path names <owner>/<repo> by its first two components; only a
+    root collection manifest carries no repository in its path."""
+    public = {repo_identity(e["repository"]) for e in enrollment if e["visibility"] == "public"}
+    named = {repo_identity(r) for r in named_repositories(document)}
+    unprovable = 0
+    for path in _provenance_paths(document):
+        parts = path.split("/")
+        if len(parts) == 1 and _ROOT_MANIFEST_RE.match(path):
+            continue
+        if len(parts) >= 3 and all(parts[:2]):
+            named.add(repo_identity(f"{parts[0]}/{parts[1]}"))
+        else:
+            unprovable += 1
+    return len(named - public) + unprovable
+
+
+def check_public_destination(output: Path, document: Any, enrollment_path: Path | None) -> None:
+    """Refuse to write `document` to `output` inside a git checkout (a public
+    repository, as for `collect`) when it names any repository that the
+    enrollment does not declare public. The enrollment defaults to the
+    checkout's docs/qualification/enrollment.json; a missing or invalid one
+    fails closed. Outside any checkout nothing is checked (the private side,
+    like --private-archive-dir). The refused identities are never printed."""
+    root = _git_root(output.resolve().parent)
+    if root is None:
+        return
+    path = enrollment_path if enrollment_path is not None \
+        else root / "docs" / "qualification" / "enrollment.json"
+    enrollment = load_enrollment(path)
+    count = public_identity_violations(document, enrollment)
+    if count:
+        raise CollectionError(
+            f"refusing to write {count} repository identit{'y' if count == 1 else 'ies'} not "
+            f"enrolled as public into {output}, which is inside a git checkout (public). "
+            "Write it outside the repository instead (founder ruling O3).")
 
 
 def _git_root(path: Path) -> Path | None:
@@ -363,7 +455,7 @@ def collect(client: GitHubClient, enrollment: list[dict[str, Any]], *, public_ar
     for root, repos in per_root.items():
         manifest = {"format": COLLECTION_MANIFEST_FORMAT, "collected_at": collected_at,
                     "repositories": sorted(repos, key=lambda r: repo_identity(r["repository"]))}
-        errors = local_validation_errors("qualification-collection-manifest", manifest)
+        errors = persisted_local_diagnostics("qualification-collection-manifest", manifest)
         if errors:
             raise CollectionError(f"manifest fails schema: {errors[:3]}")
         path = root / f"{COLLECTION_MANIFEST_PREFIX}{stamp}.json"
