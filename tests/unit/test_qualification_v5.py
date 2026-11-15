@@ -14,8 +14,7 @@ from faraday_review.telemetry.qualification_v5 import qualification_v5
 REPO = "tomrivera-ops/ecosystem-audit"
 FOUNDER = "U_kgDODk3msA"
 TS = "2026-11-20T00:00:00Z"
-POLICY = {"source": "tomrivera-ops/agent-contracts", "source_commit": "4" * 40, "sha256": "0" * 64,
-          "status": "proposed"}
+POLICY = {"name": "adr-0014-reference-path-tiers", "sha256": "0" * 64, "status": "proposed"}
 
 
 def h(n: int, v: int = 0) -> str:
@@ -319,3 +318,9 @@ def test_confirmed_disagreement_alone_blocks_an_otherwise_met_gate():
     assert c["verified_count"]["ok"] and c["escalation"]["status"] == "pass"
     assert c["sampling"]["status"] == "pass" and c["exceptions_open"] == 0 and c["green_coverage"]["ok"]
     assert c["confirmed_material_disagreements"] == 1 and r["gate"]["met"] is False
+
+
+def test_report_names_only_the_caller_repository():
+    from faraday_review.github.collection import public_identity_violations
+    r = _met_world().run()
+    assert public_identity_violations(r, [{"repository": REPO, "visibility": "public"}]) == 0
