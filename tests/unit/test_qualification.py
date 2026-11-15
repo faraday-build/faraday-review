@@ -316,6 +316,9 @@ def test_synthetic_only_ledger_never_meets_gate(tmp_path):
 REVIEWED_SYNTHETIC_PRS = [
     {"repository": "tomrivera-ops/ecosystem-audit", "pr_number": 23,
      "reason": "S6 synthetic smoke (Faraday Review shadow acceptance, 2026-11-15); never merged"},
+    {"repository": "tomrivera-ops/ecosystem-audit", "pr_number": 25,
+     "reason": "S6 retry synthetic smoke (Faraday Review shadow acceptance retry after #12 "
+               "check-runs fix, 2026-11-15); never merged"},
 ]
 
 
