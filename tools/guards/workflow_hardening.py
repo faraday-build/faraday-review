@@ -25,6 +25,14 @@ MAX_PERMISSIONS = {
     "actions": "read",
 }
 RANK = {"none": 0, "read": 1, "write": 2}
+# Narrow, reviewed exceptions to the ceiling: (workflow file name, job id) ->
+# {scope: highest level}. Only the qualification monitor's status-issue job
+# may write issues (one deduplicated status issue in the caller repository,
+# GHO-AUTONOMOUS-PRODUCTION-010 M1). The workflow level and every other job
+# and file stay at the ceiling above.
+JOB_SCOPE_EXCEPTIONS = {
+    ("qualification-monitor.yml", "status-issue"): {"issues": "write"},
+}
 
 SHA_PIN = re.compile(r"^[\w.-]+/[\w.-]+(/[\w.-]+)*@[0-9a-f]{40}$")
 LOCAL_REF = re.compile(r"^(\./|docker://)")
@@ -90,7 +98,10 @@ def check_file(path: Path, raw: str, doc: dict) -> list[Finding]:
             if perms == "write-all":
                 add("FW-P0-002", "P0", f"{where}: permissions 'write-all'.")
             continue
+        allowed = JOB_SCOPE_EXCEPTIONS.get((path.name, where), {}) if where != "workflow" else {}
         for scope, level in perms.items():
+            if scope in allowed and RANK.get(str(level), 2) <= RANK[allowed[scope]]:
+                continue
             ceiling = MAX_PERMISSIONS.get(scope)
             if ceiling is None:
                 if RANK.get(str(level), 2) >= RANK["write"]:
