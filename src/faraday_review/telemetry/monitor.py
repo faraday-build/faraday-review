@@ -270,7 +270,7 @@ def _anomaly_counts(anomalies: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-MAX_QUEUE_MARKER = 100
+MAX_QUEUE_MARKER = 500
 
 
 def v5_summary(v5: dict[str, Any] | None, unavailable: str | None) -> dict[str, Any]:
@@ -293,9 +293,9 @@ def v5_summary(v5: dict[str, Any] | None, unavailable: str | None) -> dict[str, 
     }
 
 
-def _queue_marker(summary: dict[str, Any]) -> list[str]:
+def _queue_items(summary: dict[str, Any]) -> list[str]:
     return sorted(f"{q['pr_number']}:{q['head_sha'][:12]}:{'+'.join(q['reasons'])}"
-                  for q in summary.get("founder_queue", []))[:MAX_QUEUE_MARKER]
+                  for q in summary.get("founder_queue", []))
 
 
 def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
@@ -389,7 +389,13 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
     }
     if summary is not None:
         doc["qualification_v5"] = summary
-        doc["marker"]["founder_queue"] = _queue_marker(summary)
+        items = _queue_items(summary)
+        # The visible list is capped (issue-body size); the digest and total
+        # cover the whole queue, so an item beyond the cap still notifies
+        # (Codex P2, #20).
+        doc["marker"]["founder_queue"] = items[:MAX_QUEUE_MARKER]
+        doc["marker"]["founder_queue_total"] = len(items)
+        doc["marker"]["founder_queue_digest"] = _sha256(canonical_bytes(items))
     return doc
 
 
@@ -569,7 +575,8 @@ def monitor_report(*, readiness_path: Path, ledger_path: Path, manifest_paths: l
         try:
             v5 = _load_v5(v5_path, readiness_path, ledger_raw)
             _identity_guard(repository, [v5])
-        except MonitorError:
+            v5_summary(v5, None)  # every field the summary reads (Codex P2, #20)
+        except (MonitorError, KeyError, TypeError, ValueError, AttributeError):
             v5, v5_unavailable = None, "v5_rejected"
     evidence = {"readiness": {"name": readiness_path.name,
                               "sha256": _sha256(readiness_path.read_bytes())},
@@ -623,6 +630,12 @@ def parse_marker(body: str, repository: str) -> dict[str, Any] | None:
     queue = marker.get("founder_queue", [])
     if not isinstance(queue, list) or not all(isinstance(q, str) for q in queue):
         return None
+    total = marker.get("founder_queue_total", 0)
+    if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+        return None
+    qd = marker.get("founder_queue_digest")
+    if qd is not None and not isinstance(qd, str):
+        return None
     return marker
 
 
@@ -638,7 +651,9 @@ def notification(current: dict[str, Any], previous: dict[str, Any] | None) -> li
         reasons.append("critical")
     if any(v > prev["anomaly_counts"].get(k, 0) for k, v in current["anomaly_counts"].items()):
         reasons.append("new_anomaly")
-    if set(current.get("founder_queue", [])) - set(prev.get("founder_queue", [])):
+    if set(current.get("founder_queue", [])) - set(prev.get("founder_queue", [])) or (
+            current.get("founder_queue_total", 0) > MAX_QUEUE_MARKER
+            and current.get("founder_queue_digest") != prev.get("founder_queue_digest")):
         reasons.append("founder_queue")
     return reasons
 

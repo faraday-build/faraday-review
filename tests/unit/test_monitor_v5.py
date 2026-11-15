@@ -19,7 +19,8 @@ def _reference(built: dict, tier: str = "A3") -> dict:
         head = c["head_sha"]
         prs.append({
             "repository": c["repository"], "pr_number": c["pr_number"], "head_sha": head,
-            "first_head_sha": head, "heads": [{"head_sha": head, "first_created_at": "2026-11-16T10:00:00Z"}],
+            "first_head_sha": head, "heads": [{"head_sha": head, "first_created_at": "2026-11-16T10:00:00Z",
+                                               "first_suite_at": None}],
             "live": {"state": "open", "merged": False, "draft": False, "head_sha": head, "base_ref": "main",
                      "merged_at": None, "merge_commit_sha": None},
             "exact_head": True,
@@ -185,3 +186,28 @@ def test_founder_queue_alone_raises_attention_on_an_ok_v4_status(tmp_path):
     v5 = _v5(arc, built, tier="A3" if "green" in classes else "A0")
     _, status, _ = _monitor(arc, built, extra=("--qualification-v5", v5))
     assert status["qualification_v5"]["founder_queue"] and status["status"] == "ATTENTION"
+
+
+
+def test_malformed_nested_v5_conditions_are_dropped_not_fatal(tmp_path):
+    rc, status, _, base = _tampered(tmp_path, lambda d: d["gate"].update(conditions={}))
+    assert rc == 0 and status["qualification_v5"] == {"available": False, "reason": "v5_rejected"}
+    assert status["qualification"] == base["qualification"]
+
+
+def test_queue_items_beyond_the_marker_cap_still_notify():
+    from faraday_review.telemetry.monitor import MAX_QUEUE_MARKER
+    visible = [f"{n}:aaaa:sample" for n in range(MAX_QUEUE_MARKER)]
+    prev = _marker(visible, founder_queue_total=MAX_QUEUE_MARKER + 1, founder_queue_digest="d1")
+    cur = _marker(visible, founder_queue_total=MAX_QUEUE_MARKER + 2, founder_queue_digest="d2")
+    assert notification(cur, prev) == ["founder_queue"]
+    assert notification(cur, dict(cur)) == []
+
+
+def test_marker_carries_total_and_digest(tmp_path):
+    arc, built = _world(tmp_path)
+    classes = {c["classifier_class"] for c in built["report"]["counted_prs"]}
+    v5 = _v5(arc, built, tier="A3" if "green" in classes else "A0")
+    _, status, _ = _monitor(arc, built, extra=("--qualification-v5", v5))
+    m = status["marker"]
+    assert m["founder_queue_total"] == len(m["founder_queue"]) and m["founder_queue_digest"].startswith("sha256:")
