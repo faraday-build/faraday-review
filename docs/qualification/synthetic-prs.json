@@ -8,5 +8,10 @@
     "pr_number": 25,
     "reason": "S6 retry synthetic smoke (Faraday Review shadow acceptance retry after #12 check-runs fix, 2026-11-15); never merged",
     "repository": "tomrivera-ops/ecosystem-audit"
+  },
+  {
+    "pr_number": 27,
+    "reason": "S6 v3 synthetic smoke (Faraday Review shadow acceptance after #14 F1/F2, 2026-11-15); never merged",
+    "repository": "tomrivera-ops/ecosystem-audit"
   }
 ]
