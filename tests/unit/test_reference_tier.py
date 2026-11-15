@@ -36,19 +36,26 @@ def test_unknown_floor_is_unknown(floor):
     assert rt.pr_tier(["README.md"], floor) == rt.UNKNOWN
 
 
-def test_policy_is_qualification_only_and_unadopted():
-    policy = json.loads((rt.POLICY_DIR / rt.POLICY_FILE).read_text(encoding="utf-8"))
-    qa1 = policy["qualification_qa1"]
-    assert qa1["adopted"] is False and qa1["authorizes_merge"] is False
-    assert qa1["reference_verdict_is_founder_adjudication"] is False
-    assert policy["activation"] == {"enabled": False, "repositories": []}
+def test_vendored_file_is_path_patterns_only_and_proposed():
+    ref = json.loads((rt.POLICY_DIR / rt.POLICY_FILE).read_text(encoding="utf-8"))
+    assert ref["status"] == "proposed" and ref["default"] == "A2"
+    assert set(ref) <= {"policy", "status", "purpose", "evaluation", "glob", "a0_path_set",
+                        "a0_path_exclusions", "a3_paths", "a1_paths", "default", "note"}
+    raw = "".join((rt.POLICY_DIR / n).read_text(encoding="utf-8") for n in (rt.POLICY_FILE, rt.VECTORS_FILE))
+    for token in ("SHA256:", "allowed-signers", "faraday-merge-go", "grant", "node_id", "U_kgD"):
+        assert token not in raw
+
+
+def test_output_provenance_names_no_repository_or_commit():
+    prov = rt.load_policy()["provenance"]
+    assert prov == {"name": "adr-0014-reference-path-tiers", "sha256": prov["sha256"], "status": "proposed"}
 
 
 def test_altered_vendored_policy_fails_closed(tmp_path, monkeypatch):
     for name in ("VENDORED.json", rt.POLICY_FILE, rt.VECTORS_FILE):
         (tmp_path / name).write_bytes((rt.POLICY_DIR / name).read_bytes())
     policy = json.loads((tmp_path / rt.POLICY_FILE).read_text())
-    policy["reference_path_tiers"]["default"] = "A0"
+    policy["default"] = "A0"
     (tmp_path / rt.POLICY_FILE).write_text(json.dumps(policy))
     monkeypatch.setattr(rt, "POLICY_DIR", tmp_path)
     rt.load_policy.cache_clear()

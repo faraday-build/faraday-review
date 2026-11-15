@@ -13,12 +13,12 @@
     "reference_policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source", "source_commit", "sha256", "status"],
+      "required": ["name", "sha256", "status"],
+      "description": "The vendored reference path tiers, by content digest only (no source repository or commit).",
       "properties": {
-        "source": { "type": "string" },
-        "source_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "name": { "const": "adr-0014-reference-path-tiers" },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "status": { "type": ["string", "null"] }
+        "status": { "const": "proposed" }
       }
     },
     "prs": {
