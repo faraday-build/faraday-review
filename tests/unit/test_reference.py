@@ -53,6 +53,7 @@ class Api:
         self.pr_commits = [{"sha": HEAD}]
         self.timeline: list = []
         self.visibility = {"visibility": "public", "private": False}
+        self.statuses: list = []
 
     @property
     def routes(self):
@@ -75,6 +76,10 @@ class Api:
             f"{b}/pulls/28/commits": (200, self.pr_commits),
             f"{b}/commits": (200, self.commits),
             f"{b}/issues/28/timeline": (200, self.timeline),
+            f"{b}/commits/{HEAD}/status": (200, {"statuses": self.statuses}),
+            f"{b}/commits/{HEAD}/check-suites": (200, {"total_count": 1, "check_suites": [
+                {"id": 1, "created_at": "2026-11-15T06:19:00Z"}]}),
+            f"{b}/commits/{OLD}/check-suites": (200, {"total_count": 0, "check_suites": []}),
         }
 
 
@@ -292,3 +297,62 @@ def test_output_names_only_the_caller_repository(monkeypatch, tmp_path):
     _, doc, _ = run(monkeypatch, tmp_path, Api())
     assert public_identity_violations(doc, [{"repository": REPO, "visibility": "public"}]) == 0
     assert "agent-contracts" not in json.dumps(doc)
+
+
+def test_review_findings_count_even_without_a_receipt_marker(monkeypatch, tmp_path):
+    api = Api()
+    api.reviews = [{"id": 700, "user": CODEX, "commit_id": HEAD, "body": "Some review without a marker"}]
+    api.inline = [{"id": 1, "user": CODEX, "pull_request_review_id": 700,
+                   "body": "![P1 Badge](https://img.shields.io/x) bad"}]
+    codex = only(run(monkeypatch, tmp_path, api)[1])["codex"]
+    assert codex["status"] == "findings" and codex["receipt_ids"] == [900]
+
+
+def test_requirements_from_both_paths_are_conjunctive(monkeypatch, tmp_path):
+    api = Api()
+    api.rules = [{"type": "required_status_checks", "parameters": {
+        "required_status_checks": [{"context": "required-checks"}]}}]
+    api.check_runs[0]["app"] = {"id": 1}  # success, but not from the classic-pinned app
+    rc = only(run(monkeypatch, tmp_path, api)[1])["required_checks"]
+    assert rc["status"] == "not_success"
+    assert {(c["context"], c["app_id"]) for c in rc["contexts"]} == {("required-checks", APP),
+                                                                     ("required-checks", None)}
+
+
+@pytest.mark.parametrize("state,pinned,status", [("success", False, "success"), ("failure", False, "not_success"),
+                                                 ("success", True, "not_success")])
+def test_commit_status_satisfies_only_unpinned_requirements(monkeypatch, tmp_path, state, pinned, status):
+    api = Api()
+    api.check_runs = []
+    api.classic = ({"checks": [{"context": "ci/legacy", "app_id": APP}], "contexts": ["ci/legacy"]} if pinned
+                   else {"checks": [{"context": "ci/legacy", "app_id": None}], "contexts": ["ci/legacy"]})
+    api.statuses = [{"context": "ci/legacy", "state": state}]
+    rc = only(run(monkeypatch, tmp_path, api)[1])["required_checks"]
+    assert rc["status"] == status
+
+
+class MovingHead(Api):
+    """The PR head changes after the first PR read (a push mid-collection)."""
+
+    @property
+    def routes(self):
+        routes = dict(super().routes)
+        first = routes[f"/repos/{REPO}/pulls/28"][1]
+        seen = {"n": 0}
+
+        def pr(method, kwargs):
+            seen["n"] += 1
+            return 200, first if seen["n"] == 1 else dict(first, head={"sha": OLD})
+        routes[f"/repos/{REPO}/pulls/28"] = pr
+        return routes
+
+
+def test_head_that_moves_during_collection_fails_closed(monkeypatch, tmp_path):
+    pr = only(run(monkeypatch, tmp_path, MovingHead())[1])
+    assert pr["exact_head"] is False and pr["path_tier"]["tier"] == "unknown"
+    assert pr["required_checks"]["status"] == "unknown"
+
+
+def test_head_transition_evidence_is_recorded(monkeypatch, tmp_path):
+    pr = only(run(monkeypatch, tmp_path, Api())[1])
+    assert pr["heads"][0]["first_suite_at"] == "2026-11-15T06:19:00Z"

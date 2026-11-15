@@ -132,14 +132,17 @@ def _codex(client: GitHubClient, repo: str, n: int, head: str, first_head: str) 
         prefix = _reviewed_prefix(c.get("body")) if _is_codex(c.get("user")) else None
         if prefix:
             receipts.append((int(c["id"]), "comment", prefix))
+    # Every authenticated Codex review is registered by its commit, whether
+    # or not its body also carries a receipt: findings attribution never
+    # depends on receipt recognition (Codex P1, #18).
     review_commit = {}
     for r in reviews:
         if not _is_codex(r.get("user")):
             continue
+        review_commit[int(r["id"])] = str(r.get("commit_id", ""))
         prefix = _reviewed_prefix(r.get("body"))
         if prefix and str(r.get("commit_id", "")).startswith(prefix):
             receipts.append((int(r["id"]), "review", prefix))
-            review_commit[int(r["id"])] = str(r["commit_id"])
     findings = []
     for c in inline:
         if not _is_codex(c.get("user")):
@@ -165,33 +168,50 @@ def _codex(client: GitHubClient, repo: str, n: int, head: str, first_head: str) 
 def _required_checks(client: GitHubClient, repo: str, base_ref: str, head: str) -> dict[str, Any]:
     # Required contexts from both enforcement paths, read-only: classic
     # branch protection (exposed on the branch object) and rulesets.
-    required: dict[str, int | None] = {}
+    # Every requirement from both paths is kept and must hold on its own
+    # (conjunctive): one path's unpinned context never relaxes the other's
+    # app pin (Codex P2, #18). app_id None/-1 = any source.
+    required: set[tuple[str, int | None]] = set()
+
+    def pin(value: Any) -> int | None:
+        return None if value in (None, -1) else int(value)
+
     branch = client.get_json(f"/repos/{repo}/branches/{base_ref}")
     classic = ((branch.get("protection") or {}).get("required_status_checks") or {}
                if isinstance(branch, dict) else {})
+    pinned = {str(item["context"]) for item in classic.get("checks") or []}
     for item in classic.get("checks") or []:
-        required[str(item["context"])] = item.get("app_id")
+        required.add((str(item["context"]), pin(item.get("app_id"))))
     for context in classic.get("contexts") or []:
-        required.setdefault(str(context), None)
+        if str(context) not in pinned:
+            required.add((str(context), None))
     rules = client.paginate(f"/repos/{repo}/rules/branches/{base_ref}")
     for rule in rules:
         if rule.get("type") != "required_status_checks":
             continue
         for item in (rule.get("parameters") or {}).get("required_status_checks") or []:
-            required[str(item["context"])] = item.get("integration_id")
+            required.add((str(item["context"]), pin(item.get("integration_id"))))
     if not required:
         return {"status": UNKNOWN, "reason": "no_required_checks", "contexts": []}
+    # Commit statuses (no app): they can satisfy only an unpinned requirement,
+    # as in github/checks.py (Codex P2, #18).
+    combined = client.get_json(f"/repos/{repo}/commits/{head}/status")
+    statuses = {str(s.get("context")): s for s in (combined.get("statuses") or [])
+                if isinstance(combined, dict)} if isinstance(combined, dict) else {}
     contexts = []
-    for context in sorted(required):
-        app_id = required[context]
+    for context, app_id in sorted(required, key=lambda r: (r[0], -1 if r[1] is None else r[1])):
         runs = client.paginate_key(f"/repos/{repo}/commits/{head}/check-runs", "check_runs",
                                    {"check_name": context, "filter": "latest"})
         runs = [r for r in runs if r.get("name") == context and r.get("head_sha") == head
                 and (app_id is None or (r.get("app") or {}).get("id") == app_id)]
         latest = max(runs, key=lambda r: (str(r.get("started_at") or ""), int(r["id"])), default=None)
-        contexts.append({"context": context, "app_id": app_id,
-                         "conclusion": latest.get("conclusion") if latest else None,
-                         "check_run_id": int(latest["id"]) if latest else None})
+        conclusion = latest.get("conclusion") if latest else None
+        source = "check_run" if latest else None
+        if latest is None and app_id is None and context in statuses:
+            conclusion = str(statuses[context].get("state"))
+            source = "status"
+        contexts.append({"context": context, "app_id": app_id, "conclusion": conclusion,
+                         "check_run_id": int(latest["id"]) if latest else None, "evidence_kind": source})
     ok = all(c["conclusion"] == "success" for c in contexts)
     return {"status": "success" if ok else "not_success", "contexts": contexts}
 
@@ -258,6 +278,15 @@ def collect_reference(client: GitHubClient, ledger: dict[str, Any], synthetic: l
             raise ReferenceError("reference evidence is collected for public repositories only "
                                  "(founder decision P8); nothing written")
         floor = entry.get("repository_floor", UNKNOWN)
+        # Head-transition evidence: when GitHub first saw each head (its
+        # earliest check suite, created on push), so a founder label applied
+        # after a push but before that head's shadow run is still bound to it.
+        heads = []
+        for h in rec["heads"]:
+            suites = client.paginate_key(f"/repos/{repo}/commits/{h['head_sha']}/check-suites",
+                                         "check_suites")
+            seen = sorted(str(s["created_at"]) for s in suites if s.get("created_at"))
+            heads.append({**h, "first_suite_at": seen[0] if seen else None})
         pr = client.get_json(f"/repos/{repo}/pulls/{n}")
         live_head = str(pr["head"]["sha"])
         exact = live_head == head
@@ -266,16 +295,25 @@ def collect_reference(client: GitHubClient, ledger: dict[str, Any], synthetic: l
                 "base_ref": str(pr["base"]["ref"]),
                 "merged_at": pr.get("merged_at"), "merge_commit_sha": pr.get("merge_commit_sha")
                 if pr.get("merged") else None}
+        path_tier = _path_tier(client, repo, n, pr, exact, floor)
+        codex = _codex(client, repo, n, head, rec["first_head_sha"])
+        checks = (_required_checks(client, repo, live["base_ref"], head) if exact
+                  else {"status": UNKNOWN, "reason": "head_moved", "contexts": []})
+        outcome = _outcome(client, repo, n, pr, head, collected_at)
+        labels = _label_events(client, repo, n)
+        # The file list and checks are mutable listings: re-read the head
+        # after them and fail closed if it moved meanwhile (Codex P2, #18).
+        if exact and str(client.get_json(f"/repos/{repo}/pulls/{n}")["head"]["sha"]) != head:
+            exact = False
+            path_tier = {"status": "head_moved", "tier": UNKNOWN, "floor": floor, "paths": [],
+                         "path_tier_counts": tier_counts([])}
+            checks = {"status": UNKNOWN, "reason": "head_moved", "contexts": []}
         item = {
             "repository": repo, "pr_number": n, "head_sha": head,
-            "first_head_sha": rec["first_head_sha"], "heads": rec["heads"],
+            "first_head_sha": rec["first_head_sha"], "heads": heads,
             "live": live, "exact_head": exact,
-            "path_tier": _path_tier(client, repo, n, pr, exact, floor),
-            "codex": _codex(client, repo, n, head, rec["first_head_sha"]),
-            "required_checks": (_required_checks(client, repo, live["base_ref"], head) if exact
-                                else {"status": UNKNOWN, "reason": "head_moved", "contexts": []}),
-            "outcome": _outcome(client, repo, n, pr, head, collected_at),
-            "founder_label_events": _label_events(client, repo, n),
+            "path_tier": path_tier, "codex": codex, "required_checks": checks,
+            "outcome": outcome, "founder_label_events": labels,
         }
         out.append(item)
     return {"format": REFERENCE_FORMAT, "collected_at": collected_at,
