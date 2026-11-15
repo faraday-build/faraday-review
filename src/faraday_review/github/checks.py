@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..models import ObservedCheck
+from ..errors import GitHubApiError
 from .client import GitHubClient
 
 _SUCCESS_CONCLUSIONS = frozenset({"success"})
@@ -12,7 +13,13 @@ _FAILURE_CONCLUSIONS = frozenset({"failure", "cancelled", "timed_out", "action_r
 def observe_required_checks(
     client: GitHubClient, repository: str, head_sha: str, required_contexts: list[str]
 ) -> list[ObservedCheck]:
-    check_runs = client.paginate(f"/repos/{repository}/commits/{head_sha}/check-runs")
+    # The check-runs endpoint wraps its list: {"total_count": n, "check_runs": [...]}
+    # (S6 live smoke, 2026-11-15). A short listing fails closed, never "missing".
+    check_runs, total = client.paginate_key_counted(
+        f"/repos/{repository}/commits/{head_sha}/check-runs", "check_runs")
+    if total is not None and len(check_runs) < total:
+        raise GitHubApiError(
+            f"check-runs listing for {head_sha} truncated ({len(check_runs)} of {total})")
     statuses = client.get_json(f"/repos/{repository}/commits/{head_sha}/status")
 
     states: dict[str, str] = {}
