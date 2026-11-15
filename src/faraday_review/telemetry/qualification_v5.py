@@ -36,6 +36,7 @@ from ..canonical import canonical_bytes
 from .qualification import (
     GATE_THRESHOLD_FLOOR,
     QualificationError,
+    _occurrence_exclusions,
     persisted_local_diagnostics,
     repo_identity,
 )
@@ -63,9 +64,13 @@ def _key(repository: str, pr: int) -> tuple[str, int]:
     return (repo_identity(repository), int(pr))
 
 
-def _escalated(ledger: dict[str, Any], repository: str, pr: int, head: str, cls: str) -> bool | None:
-    """Faraday's recorded escalation on the latest eligible occurrence of
-    the current-head entry with the counted class; None if not recorded."""
+def _escalated(ledger: dict[str, Any], repository: str, pr: int, head: str, cls: str,
+               released: list[str] | None) -> bool | None:
+    """Faraday's recorded escalation on the latest *qualifying* occurrence of
+    the current-head entry with the counted class: identity-eligible,
+    completed, fresh and free of every v4 qualification exclusion (policy
+    digest, blocking-reason category), exactly as readiness judges it
+    (Codex P2, #19). None if not recorded."""
     best = None
     for entry in ledger["entries"]:
         if _key(entry["repository"], entry["pr_number"]) != _key(repository, pr) or \
@@ -74,7 +79,9 @@ def _escalated(ledger: dict[str, Any], repository: str, pr: int, head: str, cls:
         for run in entry["runs"]:
             for occ in run["occurrence_log"]:
                 if (occ.get("eligible") and occ.get("final_status") == "completed"
-                        and occ.get("stale_state") == "fresh" and occ.get("classifier_class") == cls):
+                        and occ.get("stale_state") == "fresh" and occ.get("classifier_class") == cls
+                        and not _occurrence_exclusions(occ, run.get("policy_digest_verified", False),
+                                                       run.get("policy_bundle_digest"), released)):
                     rank = (str(occ.get("created_at")), str(occ.get("event_key")))
                     if best is None or rank > best[0]:
                         best = (rank, occ.get("escalated"))
@@ -83,15 +90,23 @@ def _escalated(ledger: dict[str, Any], repository: str, pr: int, head: str, cls:
     return best[1]
 
 
+def _seen_at(h: dict[str, Any]) -> str | None:
+    """When the head became current: GitHub's earliest check suite for the
+    commit (created on push), else its first shadow-run telemetry. The suite
+    time precedes the run, so a label applied while the run was still
+    queued or running is bound to the right head (Codex P2, #19)."""
+    times = [t for t in (h.get("first_suite_at"), h.get("first_created_at")) if t]
+    return min(times) if times else None
+
+
 def _tenure(ref: dict[str, Any], head: str) -> tuple[str | None, str | None]:
-    """[start, end) during which `head` was the PR head, from the first
-    shadow-run time of each head (later pushes end a head's tenure)."""
-    dated = sorted((h for h in ref["heads"] if h["first_created_at"]),
-                   key=lambda h: (h["first_created_at"], h["head_sha"]))
-    for i, h in enumerate(dated):
-        if h["head_sha"] == head:
-            nxt = next((d["first_created_at"] for d in dated[i + 1:] if d["head_sha"] != head), None)
-            return h["first_created_at"], nxt
+    """[start, end) during which `head` was the PR head (a later head's
+    arrival ends it)."""
+    dated = sorted(((_seen_at(h), h["head_sha"]) for h in ref["heads"] if _seen_at(h)))
+    for i, (start, sha) in enumerate(dated):
+        if sha == head:
+            nxt = next((t for t, s in dated[i + 1:] if s != head), None)
+            return start, nxt
     return None, None
 
 
@@ -204,7 +219,8 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         items.append({
             "repository": c["repository"], "pr_number": int(c["pr_number"]), "head_sha": c["head_sha"],
             "faraday_class": cls,
-            "escalated": _escalated(ledger, c["repository"], c["pr_number"], c["head_sha"], cls),
+            "escalated": _escalated(ledger, c["repository"], c["pr_number"], c["head_sha"], cls,
+                                    readiness.get("gate", {}).get("released_policy_digests")),
             "reference": view,
             "exceptions": _exceptions(cls, view),
             "founder_answer": (founder_answer(ref, c["head_sha"], founder_node_id) if ref
@@ -254,12 +270,12 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         answered = ans["status"] == "answered"
         if answered and CLASS_ORDER.index(ans["class"]) > CLASS_ORDER.index(i["faraday_class"]):
             # The founder's class is more severe than Faraday's: a confirmed
-            # under-escalation. Over-escalation by Faraday is safe.
-            if i["exceptions"] or i.get("sampled"):
-                confirmed.append({"repository": i["repository"], "pr_number": i["pr_number"],
-                                  "faraday_class": i["faraday_class"], "founder_class": ans["class"]})
-                if i.get("sampled"):
-                    sampled_disagreements += 1
+            # under-classification, wherever the founder answered (queued or
+            # voluntary; Codex P2, #19). Over-escalation by Faraday is safe.
+            confirmed.append({"repository": i["repository"], "pr_number": i["pr_number"],
+                              "faraday_class": i["faraday_class"], "founder_class": ans["class"]})
+            if i.get("sampled"):
+                sampled_disagreements += 1
         if i["reference"]["status"] != "known":
             status = "reference_unknown"
         elif i["exceptions"] and not answered:
