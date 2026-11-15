@@ -170,7 +170,8 @@ def test_report_writes_step_summary_and_flags_critical():
 
 def test_evidence_retained_90_days():
     step = _steps("monitor")[_index("monitor", "Upload")]
-    assert step["if"] == "always()"
+    # Never publish an input set monitor-report refused (Codex P1, #17).
+    assert step["if"] == "always() && steps.report.outputs.ready == 'true'"
     assert step["with"]["retention-days"] == 90
 
 
@@ -192,6 +193,8 @@ def test_dedupe_logic_present():
     # A comment only when monitor-notify asked for one.
     assert 'if [ -s "$W/comment.md" ]' in run
     assert run.index("monitor-notify") < run.index("issues/$number/comments")
+    # The marker advances only after the comment was posted (Codex P2, #17).
+    assert run.index("issues/$number/comments") < run.index('-X PATCH "repos/$CALLER_REPO/issues/$number"')
 
 
 def test_only_allowed_write_endpoints():

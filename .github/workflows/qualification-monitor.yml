@@ -224,7 +224,10 @@ jobs:
           echo "critical=$crit" >> "$GITHUB_OUTPUT"
 
       - name: Upload qualification status
-        if: always()
+        # Only once monitor-report accepted every input (OK, ATTENTION or
+        # CRITICAL): a refused input set may name another repository and
+        # is never published (Codex P1, #17).
+        if: always() && steps.report.outputs.ready == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: faraday-review-qualification-status-${{ github.run_id }}-a${{ github.run_attempt }}
@@ -304,9 +307,12 @@ jobs:
           gh api "repos/$CALLER_REPO/issues/$number" --jq '.body // ""' > "$W/previous-body.md"
           faraday-review monitor-notify --status "$W/out/status.json" --repository "$CALLER_REPO" \
             --previous-body "$W/previous-body.md" --comment-output "$W/comment.md"
-          gh api -X PATCH "repos/$CALLER_REPO/issues/$number" -F body=@"$W/out/status.md" --silent
+          # Comment first, then advance the marker in the body: if the
+          # comment fails the body keeps the old marker, so the next run
+          # notifies again (Codex P2, #17).
           if [ -s "$W/comment.md" ]; then
             printf '\n[Monitor run](%s)\n' "$RUN_URL" >> "$W/comment.md"
             gh api -X POST "repos/$CALLER_REPO/issues/$number/comments" -F body=@"$W/comment.md" --silent
           fi
+          gh api -X PATCH "repos/$CALLER_REPO/issues/$number" -F body=@"$W/out/status.md" --silent
           echo "updated issue #$number"

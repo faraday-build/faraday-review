@@ -173,7 +173,10 @@ jobs:
 - **Failure notification.** CRITICAL exits non-zero, so GitHub's failed-run
   notification fires, and the issue gets a comment carrying the kill-switch
   command. Any other failure (binding, visibility, enrollment, collection,
-  refusal) fails the run before the issue is touched.
+  refusal) fails the run before the issue is touched, and nothing is
+  uploaded: the artifact is published only after `monitor-report` accepted
+  every input. A required comment is posted before the body (and its
+  marker) is updated, so a failed comment is retried on the next run.
 - **Kill switches.** Monitor: `gh variable delete
   FARADAY_REVIEW_MONITOR_ENABLED -R <caller>`. On CRITICAL (an archived
   decision, telemetry or attempt record with `approval_authorized` or
