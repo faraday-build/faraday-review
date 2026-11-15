@@ -14,6 +14,7 @@ from faraday_review.telemetry.qualification_v5 import qualification_v5
 REPO = "tomrivera-ops/ecosystem-audit"
 FOUNDER = "U_kgDODk3msA"
 TS = "2026-11-20T00:00:00Z"
+DIGEST = "sha256:" + "d" * 64
 POLICY = {"name": "adr-0014-reference-path-tiers", "sha256": "0" * 64, "status": "proposed"}
 
 
@@ -35,7 +36,8 @@ class World:
         return self
 
     def readiness(self):
-        return {"counted_prs": [{"repository": REPO, "pr_number": p["n"], "head_sha": p["head"],
+        return {"gate": {"released_policy_digests": [DIGEST]},
+                "counted_prs": [{"repository": REPO, "pr_number": p["n"], "head_sha": p["head"],
                                  "classifier_class": p["cls"], "qualification": {"status": p["status"]}}
                                 for p in self.prs]}
 
@@ -44,7 +46,8 @@ class World:
                              "runs": [{"occurrence_log": [{
                                  "eligible": True, "final_status": "completed", "stale_state": "fresh",
                                  "classifier_class": p["cls"], "created_at": p["heads"][-1][1],
-                                 "event_key": "k", "escalated": p["escalated"]}]}]}
+                                 "event_key": "k", "escalated": p["escalated"], "blocking_reasons": []}],
+                                 "policy_digest_verified": True, "policy_bundle_digest": DIGEST}]}
                             for p in self.prs]}
 
     def reference(self):
@@ -53,7 +56,7 @@ class World:
             prs.append({
                 "repository": REPO, "pr_number": p["n"], "head_sha": p["head"],
                 "first_head_sha": p["heads"][0][0],
-                "heads": [{"head_sha": s, "first_created_at": t} for s, t in p["heads"]],
+                "heads": [{"head_sha": s, "first_created_at": t, "first_suite_at": None} for s, t in p["heads"]],
                 "live": {"state": "open", "merged": False, "draft": False, "head_sha": p["head"],
                          "base_ref": "main", "merged_at": None, "merge_commit_sha": None},
                 "exact_head": p["exact"],
@@ -324,3 +327,40 @@ def test_report_names_only_the_caller_repository():
     from faraday_review.github.collection import public_identity_violations
     r = _met_world().run()
     assert public_identity_violations(r, [{"repository": REPO, "visibility": "public"}]) == 0
+
+
+def test_escalation_is_taken_from_a_qualifying_occurrence_only():
+    w = World().add(1, cls="green", tier="A0", escalated=False)
+    led = w.ledger()
+    run = led["entries"][0]["runs"][0]
+    # A newer same-class occurrence under an unreleased digest says escalated:
+    # it must not hide the qualifying occurrence's non-escalation.
+    led["entries"][0]["runs"].append({**run, "policy_bundle_digest": "sha256:" + "e" * 64,
+                                      "occurrence_log": [{**run["occurrence_log"][0], "escalated": True,
+                                                          "created_at": "2026-11-18T00:00:00Z"}]})
+    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={})
+    assert pr(r, 1)["escalated"] is False
+
+
+def test_voluntary_founder_disagreement_counts_as_confirmed():
+    w = _met_world(greens=6)
+    target = next(x["pr_number"] for x in w.run()["prs"]
+                  if x["faraday_class"] == "red" and not x["sampled"])
+    p = next(x for x in w.prs if x["n"] == target)
+    p.update(cls="yellow", tier="A2")
+    p["events"] = [("labeled", "red", "2026-11-19T00:00:00Z")]
+    r = w.run()
+    assert {"pr_number": target, "founder_class": "red"}.items() <= r["confirmed_material_disagreements"][0].items()
+    assert r["gate"]["met"] is False
+
+
+def test_label_after_push_but_before_shadow_run_binds_to_the_new_head():
+    w = World().add(1, events=[("labeled", "red", "2026-11-15T00:30:00Z")],
+                    heads=[(h(1), "2026-11-15T01:00:00Z")])
+    ref = w.reference()
+    ref["prs"][0]["heads"][0]["first_suite_at"] = "2026-11-15T00:20:00Z"
+    r = qualification_v5(w.readiness(), w.ledger(), ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert pr(r, 1)["founder_answer"]["class"] == "red"
+    # Without the push evidence the same label predates the head's run: ignored.
+    assert pr(w.run(), 1)["founder_answer"]["status"] == "none"
