@@ -760,7 +760,9 @@ def _cmd_monitor_report(args) -> int:
             readiness_path=Path(args.readiness), ledger_path=Path(args.ledger),
             manifest_paths=[Path(m) for m in args.manifest], archive=Path(args.archive_dir),
             repository=args.repository, generated_at=args.generated_at,
-            stall_hours=args.stall_hours)
+            stall_hours=args.stall_hours,
+            v5_path=Path(args.qualification_v5) if args.qualification_v5 else None,
+            v5_unavailable=args.qualification_v5_unavailable)
     except (MonitorError, QualificationError) as exc:
         print(f"monitor-report: {getattr(exc, 'reason', 'invalid_input')}: {exc}", file=sys.stderr)
         return 2
@@ -952,6 +954,10 @@ def main(argv: list[str] | None = None) -> int:
     mon.add_argument("--stall-hours", type=_positive_int, default=DEFAULT_STALL_HOURS)
     mon.add_argument("--output", required=True, help="status JSON")
     mon.add_argument("--markdown-output", required=True, help="status Markdown (issue body)")
+    mon.add_argument("--qualification-v5", default=None,
+                     help="QA-1 proposed v5 report (optional; shown, never authoritative)")
+    mon.add_argument("--qualification-v5-unavailable", default=None,
+                     help="reason the v5 report could not be produced this run (optional)")
 
     ntf = sub.add_parser("monitor-notify",
                          help="decide whether the status issue gets a comment (no network)")

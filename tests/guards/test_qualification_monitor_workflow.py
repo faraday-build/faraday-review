@@ -260,3 +260,35 @@ def test_hardening_guard_still_rejects_issues_write_elsewhere(tmp_path):
     proc = subprocess.run([sys.executable, str(ROOT / "tools/guards/workflow_hardening.py"), str(wf)],
                           capture_output=True, text=True)
     assert proc.returncode == 1
+
+
+# QA-1 (GHO-AUTONOMOUS-PRODUCTION-011, Q4): the proposed v5 step is
+# read-only, non-blocking, and can never stop or alter the v4 status.
+
+def test_v5_step_sits_between_readiness_and_report():
+    order = [_index("monitor", n) for n in ("Aggregate and readiness",
+                                            "QA-1 reference and proposed v5 gate (non-blocking)",
+                                            "Qualification status report")]
+    assert order == sorted(order)
+
+
+def test_v5_step_is_non_blocking_and_cleans_up_on_failure():
+    step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
+    run = step["run"]
+    assert step["id"] == "v5"
+    assert "set -uo pipefail" in run and "set -e" not in run.replace("set -euo", "")
+    assert "faraday-review reference" in run and "faraday-review qualification-v5" in run
+    assert 'rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"' in run
+    assert 'echo "state=unavailable" >> "$GITHUB_OUTPUT"' in run
+    assert step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+    assert '--enrollment "$W/enrollment.json"' in run
+    assert "${{" not in run
+
+
+def test_report_consumes_v5_via_env_and_drops_rejected_reports():
+    step = _steps("monitor")[_index("monitor", "Qualification status report")]
+    assert step["env"]["V5_STATE"] == "${{ steps.v5.outputs.state }}"
+    run = step["run"]
+    assert '--qualification-v5-unavailable reference_step_failed' in run
+    assert '"${v5[@]}"' in run
+    assert run.index('rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"') < run.index('case "$rc" in')

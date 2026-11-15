@@ -270,10 +270,39 @@ def _anomaly_counts(anomalies: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+MAX_QUEUE_MARKER = 100
+
+
+def v5_summary(v5: dict[str, Any] | None, unavailable: str | None) -> dict[str, Any]:
+    """The QA-1 proposed gate, summarized for the status view. Never
+    authoritative: v4 above stays the gate of record until adoption."""
+    if v5 is None:
+        return {"available": False, "reason": unavailable or "not_computed"}
+    c, g = v5["counts"], v5["gate"]["conditions"]
+    return {
+        "available": True, "status": v5["status"], "authoritative": v5["authoritative"],
+        "verified": c["verified"], "threshold": v5["threshold"],
+        "verified_green": c["verified_green"], "green_minimum": g["green_coverage"]["minimum"],
+        "window_open": c["window_open"], "reference_unknown": c["reference_unknown"],
+        "exceptions_open": c["exception_open"], "samples_pending": c["sample_pending"],
+        "escalation": g["escalation"]["status"], "sampling": g["sampling"]["status"],
+        "confirmed_material_disagreements": g["confirmed_material_disagreements"],
+        "met": v5["gate"]["met"],
+        "founder_queue": [{"pr_number": q["pr_number"], "head_sha": q["head_sha"], "reasons": q["reasons"]}
+                          for q in sorted(v5["founder_queue"], key=lambda q: q["pr_number"])],
+    }
+
+
+def _queue_marker(summary: dict[str, Any]) -> list[str]:
+    return sorted(f"{q['pr_number']}:{q['head_sha'][:12]}:{'+'.join(q['reasons'])}"
+                  for q in summary.get("founder_queue", []))[:MAX_QUEUE_MARKER]
+
+
 def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
                  manifests: list[dict[str, Any]], archive_files: list[tuple[str, Path]],
                  repository: str, generated_at: str, stall_hours: int,
-                 input_evidence: dict[str, Any]) -> dict[str, Any]:
+                 input_evidence: dict[str, Any],
+                 v5: dict[str, Any] | None = None, v5_unavailable: str | None = None) -> dict[str, Any]:
     findings, unreadable, _ = _scan_archive(archive_files)
     ledger_auth = sum(1 for a in ledger["anomalies"] if a.get("kind") in _LEDGER_AUTH_KINDS)
     ledger_auth += sum(1 for a in readiness["anomalies"]
@@ -296,10 +325,14 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
     attention = (bool(anomaly_counts) or bool(pending) or bool(unreadable)
                  or any(r["stalled"] for r in not_completed) or cond["status"] == "fail"
                  or infra["failed_runs"] > 0 or bool(readiness["qualification"]["incomplete_prs"]))
+    with_v5 = v5 is not None or v5_unavailable is not None
+    summary = v5_summary(v5, v5_unavailable) if with_v5 else None
+    if summary is not None and summary.get("founder_queue"):
+        attention = True
     status = "CRITICAL" if critical else ("ATTENTION" if attention else "OK")
     reached = checkpoint_reached(n)
     kill_command = f"gh variable delete {SHADOW_KILL_SWITCH} -R {repository}"
-    return {
+    doc = {
         "format": MONITOR_FORMAT,
         "generated_at": generated_at,
         "repository": repository,
@@ -354,6 +387,10 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
                    "anomaly_counts": anomaly_counts, "critical_digest": critical_digest},
         "note": "Qualification evidence only. The monitor authorizes nothing (HR-1).",
     }
+    if summary is not None:
+        doc["qualification_v5"] = summary
+        doc["marker"]["founder_queue"] = _queue_marker(summary)
+    return doc
 
 
 def _fmt_rate(value: Any) -> str:
@@ -418,6 +455,25 @@ def render_markdown(status: dict[str, Any]) -> str:
     lines += ["", f"### Pending founder adjudications ({len(status['pending_adjudications'])})"]
     lines += [f"- #{p['pr_number']} head `{p['head_sha'][:12]}`"
               for p in status["pending_adjudications"]] or ["- none"]
+    v5 = status.get("qualification_v5")
+    if v5 is not None:
+        lines += ["", "### QA-1 proposed gate (v5): NOT authoritative"]
+        if not v5["available"]:
+            lines.append(f"- Unavailable this run ({v5['reason']}); the v4 status above is unaffected.")
+        else:
+            lines += [
+                f"- Verified qualifying real PRs: **{v5['verified']}/{v5['threshold']}** · verified green "
+                f"{v5['verified_green']}/{v5['green_minimum']} · in an open sampling window "
+                f"{v5['window_open']} · reference unknown {v5['reference_unknown']}",
+                f"- Escalation {v5['escalation']} · sampling {v5['sampling']} · open exceptions "
+                f"{v5['exceptions_open']} · confirmed material disagreements "
+                f"{v5['confirmed_material_disagreements']} · met {v5['met']}",
+                "- Proposed only: the gate of record is the v4 gate above until the founder adopts QA-1.",
+                "", f"#### Founder queue ({len(v5['founder_queue'])})"]
+            lines += [f"- #{q['pr_number']} head `{q['head_sha'][:12]}`: {', '.join(q['reasons'])}. "
+                      f"Apply exactly one `faraday/founder-<green|yellow|red|block>` label while the "
+                      f"head is `{q['head_sha'][:12]}`."
+                      for q in v5["founder_queue"]] or ["- none: no exception or sample needs the founder"]
     lines += ["", "### Stalled / incomplete"]
     lines.append("- Incomplete PRs: " + (", ".join(f"#{n}" for n in status["incomplete_prs"])
                                          or "none"))
@@ -450,9 +506,25 @@ def render_markdown(status: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _load_v5(path: Path, readiness_path: Path, ledger_raw: bytes) -> dict[str, Any]:
+    v5 = _load_json(path, "qualification-v5 report")
+    if persisted_local_diagnostics("qualification-v5", v5):
+        raise MonitorError("qualification-v5 report fails its schema")
+    ev = v5["evidence"]
+    bare = lambda raw: _sha256(raw).removeprefix("sha256:")
+    if ev.get("ledger") != bare(ledger_raw) or ev.get("readiness") != bare(readiness_path.read_bytes()):
+        raise MonitorError("qualification-v5 report was not derived from this readiness and ledger")
+    return v5
+
+
 def monitor_report(*, readiness_path: Path, ledger_path: Path, manifest_paths: list[Path],
                    archive: Path, repository: str, generated_at: str,
-                   stall_hours: int = DEFAULT_STALL_HOURS) -> tuple[dict[str, Any], str]:
+                   stall_hours: int = DEFAULT_STALL_HOURS, v5_path: Path | None = None,
+                   v5_unavailable: str | None = None) -> tuple[dict[str, Any], str]:
+    if v5_path is not None and v5_unavailable is not None:
+        raise MonitorError("give a qualification-v5 report or an unavailable reason, not both")
+    if v5_unavailable is not None and not _KIND_RE.match(v5_unavailable):
+        raise MonitorError("invalid qualification-v5 unavailable reason")
     if not _REPOSITORY_RE.match(repository):
         raise MonitorError("invalid --repository")
     require_timestamp(generated_at, "--generated-at")
@@ -489,13 +561,26 @@ def monitor_report(*, readiness_path: Path, ledger_path: Path, manifest_paths: l
             raise MonitorError("a ledger input is missing from the archive or has changed")
     _, _, archived_docs = _scan_archive(files)
     _identity_guard(repository, [readiness, ledger, *manifests, *archived_docs])
+    v5 = None
+    if v5_path is not None:
+        # The proposed v5 report can never stop the v4 status: a report that
+        # fails any check is dropped (not rendered, not published; the
+        # workflow deletes it) and reported as rejected.
+        try:
+            v5 = _load_v5(v5_path, readiness_path, ledger_raw)
+            _identity_guard(repository, [v5])
+        except MonitorError:
+            v5, v5_unavailable = None, "v5_rejected"
     evidence = {"readiness": {"name": readiness_path.name,
                               "sha256": _sha256(readiness_path.read_bytes())},
                 "ledger": {"name": ledger_path.name, "sha256": _sha256(ledger_raw)},
                 "manifests": manifest_evidence, "archive_files": len(files)}
     status = build_status(readiness=readiness, ledger=ledger, manifests=manifests,
                           archive_files=files, repository=repository, generated_at=generated_at,
-                          stall_hours=stall_hours, input_evidence=evidence)
+                          stall_hours=stall_hours, input_evidence=evidence, v5=v5,
+                          v5_unavailable=v5_unavailable)
+    if v5 is not None:
+        evidence["qualification_v5"] = {"name": v5_path.name, "sha256": _sha256(v5_path.read_bytes())}
     _identity_guard(repository, [status])
     return status, render_markdown(status)
 
@@ -535,6 +620,9 @@ def parse_marker(body: str, repository: str) -> dict[str, Any] | None:
     digest = marker.get("critical_digest")
     if digest is not None and not isinstance(digest, str):
         return None
+    queue = marker.get("founder_queue", [])
+    if not isinstance(queue, list) or not all(isinstance(q, str) for q in queue):
+        return None
     return marker
 
 
@@ -550,6 +638,8 @@ def notification(current: dict[str, Any], previous: dict[str, Any] | None) -> li
         reasons.append("critical")
     if any(v > prev["anomaly_counts"].get(k, 0) for k, v in current["anomaly_counts"].items()):
         reasons.append("new_anomaly")
+    if set(current.get("founder_queue", [])) - set(prev.get("founder_queue", [])):
+        reasons.append("founder_queue")
     return reasons
 
 
@@ -570,6 +660,11 @@ def render_comment(status: dict[str, Any], previous: dict[str, Any] | None,
         grown = [f"`{k}` {prev_counts.get(k, 0)}→{v}" for k, v in marker["anomaly_counts"].items()
                  if v > prev_counts.get(k, 0)]
         lines.append("- New anomalies: " + ", ".join(grown))
+    if "founder_queue" in reasons:
+        new = sorted(set(marker.get("founder_queue", [])) - set((previous or {}).get("founder_queue", [])))
+        lines.append("- QA-1 (proposed) founder queue, new: "
+                     + ", ".join(f"#{q.split(':')[0]} ({q.split(':')[2]})" for q in new)
+                     + ". Label each PR with exactly one `faraday/founder-<class>` at its current head.")
     lines += ["", "The issue body holds the full status. Qualification evidence only; "
               "authorizes nothing."]
     return "\n".join(lines) + "\n"
