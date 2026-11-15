@@ -39,3 +39,11 @@ class StaleShaError(FaradayReviewError):
 
 class PublicationError(FaradayReviewError):
     reason = "publication_failure"
+
+
+class RequiredChecksPendingTimeout(FaradayReviewError):
+    """A policy-required check was still running when the bounded wait
+    ended (S6 F-1). The run is incomplete: it records a failed telemetry
+    event and never a classification (no Block, no blocking reason)."""
+
+    reason = "required_checks_pending_timeout"

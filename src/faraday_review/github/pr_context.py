@@ -32,7 +32,11 @@ def collect_context(
     repository: str,
     pr_number: int,
     required_check_contexts: list[str],
+    *,
+    observe=None,
 ) -> PullRequestContext:
+    """`observe(client, repository, head_sha, contexts)` replaces the single
+    required-check observation; shadow-run passes the bounded wait (S6 F-1)."""
     pr = client.get_json(f"/repos/{repository}/pulls/{pr_number}")
     base_sha = normalize_sha(str(pr["base"]["sha"]))
     head_sha = normalize_sha(str(pr["head"]["sha"]))
@@ -40,7 +44,7 @@ def collect_context(
         raise GitHubApiError("PR SHAs are not full 40-hex values")
 
     changed_files, total_count, diff_bytes = collect_changed_files(client, repository, pr_number)
-    observed: list[ObservedCheck] = observe_required_checks(
+    observed: list[ObservedCheck] = (observe or observe_required_checks)(
         client, repository, head_sha, required_check_contexts
     )
 

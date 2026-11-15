@@ -1,6 +1,8 @@
 """In-memory stand-in for requests.Session against the GitHub REST API.
 
-Routes map an exact URL path (query ignored) to (status, body). A body is
+Routes map an exact URL path (query ignored) to (status, body), or to a
+callable (method, kwargs) -> (status, body) for responses that change over
+time. A body is
 JSON-serializable, or bytes for a download. Every call is recorded so tests
 can prove a command only reads.
 """
@@ -50,14 +52,22 @@ class FakeSession:
         self.routes = routes
         self.headers: dict[str, str] = {}
         self.calls: list[tuple[str, str]] = []
+        # (method, path, params, json body) of every call, for tests that
+        # inspect what was sent.
+        self.sent: list[tuple[str, str, dict | None, Any]] = []
 
     def request(self, method: str, url: str, **kwargs) -> FakeResponse:
         assert "timeout" in kwargs, "every request must carry a timeout"
         path = unquote(urlsplit(url).path)
         self.calls.append((method, path))
+        self.sent.append((method, path, kwargs.get("params"), kwargs.get("json")))
         if path not in self.routes:
             return FakeResponse(404, {"message": "Not Found"})
-        status, body, *links = self.routes[path]
+        route = self.routes[path]
+        if callable(route):
+            # A scripted route: called per request, returns (status, body[, links]).
+            route = route(method, kwargs)
+        status, body, *links = route
         return FakeResponse(status, body, links[0] if links else None)
 
 

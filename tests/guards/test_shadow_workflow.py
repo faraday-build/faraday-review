@@ -59,7 +59,8 @@ def test_declares_no_secrets():
 
 def test_inputs_contract():
     inputs = _triggers(_doc())["workflow_call"]["inputs"]
-    assert set(inputs) == {"reviewer_sha", "governance_sha", "policy_digest", "required_checks"}
+    assert set(inputs) == {"reviewer_sha", "governance_sha", "policy_digest", "required_checks",
+                           "required_checks_pending_timeout", "required_checks_missing_grace"}
     assert inputs["reviewer_sha"]["required"] is True
     assert inputs["governance_sha"]["required"] is True
     # A missing digest must reach the CLI as empty => policy_digest_unpinned.
@@ -197,3 +198,78 @@ def test_failure_telemetry_recorded_when_review_step_leaves_none():
     assert review["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
     assert review["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
     assert '--head-sha "$HEAD_SHA" --base-sha "$BASE_SHA"' in review["run"]
+
+
+def _config_constant(name: str) -> int:
+    # Guard self-tests run without the package installed: read the source.
+    text = (ROOT / "src" / "faraday_review" / "config.py").read_text()
+    match = re.search(rf"^{name}\s*(?::[^=]+)?=\s*([0-9_]+)", text, re.M)
+    assert match, name
+    return int(match.group(1).replace("_", ""))
+
+
+def _wait_default(field: str) -> int:
+    text = (ROOT / "src" / "faraday_review" / "config.py").read_text()
+    match = re.search(rf"^    {field}: int = ([0-9]+)$", text, re.M)
+    assert match, field
+    return int(match.group(1))
+
+
+def test_required_check_wait_inputs_reach_the_cli():
+    """S6 F-1: the bounded wait is configured only through two optional
+    number inputs whose defaults equal the CLI defaults."""
+    inputs = _triggers(_doc())["workflow_call"]["inputs"]
+    pending, grace = inputs["required_checks_pending_timeout"], inputs["required_checks_missing_grace"]
+    assert pending["type"] == grace["type"] == "number"
+    assert pending["required"] is False and grace["required"] is False
+    assert pending["default"] == _wait_default("pending_timeout_seconds") == 900
+    assert grace["default"] == _wait_default("missing_grace_seconds") == 300
+    step = _steps()[_index("Shadow review")]
+    assert step["env"]["CHECKS_PENDING_TIMEOUT"] == "${{ inputs.required_checks_pending_timeout }}"
+    assert step["env"]["CHECKS_MISSING_GRACE"] == "${{ inputs.required_checks_missing_grace }}"
+    assert '--checks-pending-timeout "$CHECKS_PENDING_TIMEOUT"' in step["run"]
+    assert '--checks-missing-grace "$CHECKS_MISSING_GRACE"' in step["run"]
+
+
+def test_job_timeout_covers_the_longest_permitted_wait():
+    """The job must outlive the longest wait the CLI accepts, plus ten
+    minutes for checkout, install, review, publication and upload; else a
+    timeout would kill the run before it can record the pending timeout."""
+    minutes = _doc()["jobs"]["shadow"]["timeout-minutes"]
+    assert minutes * 60 >= _config_constant("PENDING_TIMEOUT_MAX_SECONDS") + 600
+
+
+def test_attempt_record_published_for_every_attempt():
+    """S6 F-2: after the review, record-failure and run-binding steps (so a
+    completed, failed or cancelled attempt all have telemetry by then), one
+    always() step publishes the attempt record, before the upload, with
+    platform identity only and the payload head (the run's head, where
+    collection looks it up). Fork PRs are skipped (read-only token)."""
+    steps = _steps()
+    publish = steps[_index("Publish attempt record")]
+    assert _index("Record failure telemetry") < _index("Publish attempt record")
+    assert _index("Record run binding") < _index("Publish attempt record")
+    assert _index("Publish attempt record") < _index("Upload shadow evidence")
+    assert publish["if"] == "always() && steps.install.outcome == 'success'"
+    env = publish["env"]
+    assert env["RUN_ID"] == "${{ github.run_id }}"
+    assert env["RUN_ATTEMPT"] == "${{ github.run_attempt }}"
+    assert env["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert env["GITHUB_TOKEN"] == "${{ github.token }}"
+    run = publish["run"]
+    assert "faraday-review publish-attempt-record" in run
+    assert '--run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"' in run
+    assert '--head-sha "$HEAD_SHA"' in run
+    assert '"$HEAD_REPO" != "$CALLER_REPO"' in run
+
+
+def test_cancellation_still_records_and_publishes():
+    """A cancelled review step (including one cancelled while waiting for
+    required checks) leaves no telemetry; record-failure maps the
+    `cancelled` outcome to workflow_step_cancelled and the publish step
+    runs after it: both use always(), which GitHub runs on cancellation."""
+    steps = _steps()
+    record = steps[_index("Record failure telemetry")]
+    assert record["if"].startswith("always()")
+    assert "cancelled) mode=workflow_step_cancelled" in record["run"]
+    assert steps[_index("Publish attempt record")]["if"].startswith("always()")

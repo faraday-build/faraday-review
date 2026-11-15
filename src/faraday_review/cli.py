@@ -11,6 +11,7 @@ no decision document could be produced.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
@@ -25,7 +26,7 @@ from types import SimpleNamespace
 
 from . import REVIEWER_VERSION
 from .canonical import write_canonical
-from .config import GitHubApiConfig, default_config, load_config
+from .config import GitHubApiConfig, default_config, load_config, validate_wait
 from .deterministic.pr_limits import evaluate_limits
 from .deterministic.secret_scan import parse_gitleaks_report, run_gitleaks
 from .errors import BudgetExceededError, FaradayReviewError
@@ -34,17 +35,19 @@ from .evidence.freshness import is_fresh
 from .evidence.serialization import write_context, write_evidence
 from .fingerprints import evidence_fingerprint, run_fingerprint
 from .github.budget import RequestBudget
+from .github.checks import wait_for_required_checks
 from .github.client import GitHubClient
 from .github.collection import CollectionError, check_public_destination, collect, load_enrollment
 from .github.preflight import RELEASED_POLICY_DIGEST, preflight
 from .github.pr_context import collect_context, fetch_head_sha
-from .github.publisher import publish_check_run, publish_summary_comment
+from .github.publisher import publish_attempt_record, publish_check_run, publish_summary_comment
 from .github.secrets import collect_secret_alerts
 from .evidence.schema_validation import validation_errors
 from .governance.authorization import failed_run_posture
 from .governance.validator_client import evaluate
 from .models import DeterministicFinding
 from .telemetry.adjudication import append_adjudication, build_adjudication_record
+from .telemetry.attempt_record import RECORD_FILES, AttemptRecordError, build_record_text
 from .telemetry.events import build_run_event
 from .telemetry.qualification import (
     DEFAULT_FOUNDER_NODE_ID,
@@ -58,6 +61,12 @@ from .telemetry.qualification import (
 )
 from .telemetry.throughput import compute_throughput
 from .telemetry.writer import append_event, read_events
+
+
+# Clock and sleeper of the required-check wait (S6 F-1); module level so
+# tests can drive the wait without real time passing.
+_wait_clock = time.monotonic
+_wait_sleep = time.sleep
 
 
 def _now_iso() -> str:
@@ -82,6 +91,16 @@ def _review_id(repository: str, pr: int, head_sha: str) -> str:
         return readable
     subject = hashlib.sha256(f"{repository}#{pr}@{head_sha}".encode("utf-8")).hexdigest()
     return f"frr-{pr}-{head_sha[:12]}-{subject[:24]}"
+
+
+def _nonnegative_int(value: str) -> int:
+    try:
+        parsed = int(value, 10)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not an integer: {value!r}") from None
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0: {value!r}")
+    return parsed
 
 
 def _positive_int(value: str) -> int:
@@ -278,9 +297,14 @@ def _cmd_shadow_run(args, run: _ShadowRun) -> int:
         raise _ShadowFailure("github_token_missing", f"no token in ${args.token_env}")
     config = load_config(Path(args.config)) if args.config else default_config()
 
+    overrides = {k: v for k, v in (("pending_timeout_seconds", args.checks_pending_timeout),
+                                   ("missing_grace_seconds", args.checks_missing_grace))
+                 if v is not None}
+    wait = validate_wait(dataclasses.replace(config.required_checks_wait, **overrides))
+
     budget = RequestBudget(config.github_api)
     run.budget = budget
-    client = GitHubClient(token, config.github_api, budget)
+    client = GitHubClient(token, config.github_api, budget, session=_new_session())
 
     infrastructure_failure = None
     findings = run.findings
@@ -288,10 +312,26 @@ def _cmd_shadow_run(args, run: _ShadowRun) -> int:
     # fault: BudgetExceededError propagates to _shadow_run, which records
     # failure_mode github_api_budget_exceeded and exits 2. It is never
     # normalized into pr_too_large.
+    # S6 F-1: the caller's required checks start on the same event as this
+    # job. Wait (bounded) until they are final before anything is
+    # classified; still pending at the deadline ends the run failed
+    # (required_checks_pending_timeout), never as a Block.
+    waits: list = []
+
+    def observe(client_, repository, head_sha, contexts):
+        result = wait_for_required_checks(
+            client_, repository, args.pr, head_sha, contexts, wait,
+            max_requests=config.github_api.max_requests_per_run,
+            reserve_requests=config.worst_case_requests(),
+            clock=_wait_clock, sleeper=_wait_sleep)
+        waits.append(result)
+        return result.observed
+
     context = collect_context(
-        client, args.repository, args.pr, sorted(args.required_check or [])
+        client, args.repository, args.pr, sorted(args.required_check or []), observe=observe
     )
     run.context = context
+    moved = next((w.head_sha_now for w in waits if w.outcome == "head_moved"), None)
     findings.extend(evaluate_limits(context, config.pr_limits))
     if args.repo_dir:
         report = artifacts / "gitleaks-report.json"
@@ -309,6 +349,10 @@ def _cmd_shadow_run(args, run: _ShadowRun) -> int:
     refetched = fetch_head_sha(client, args.repository, args.pr)
     # Freshness is known only once the comparison ran (Codex P2, #8).
     run.stale_state = "fresh"
+    if moved is not None and is_fresh(context.head_sha, refetched):
+        # The head moved while waiting for required checks (S6 F-1): the run
+        # is stale even if the head has since moved back.
+        refetched = moved
     if not is_fresh(context.head_sha, refetched):
         run.stale_state = "stale_before_validation"
         findings.append(
@@ -420,6 +464,63 @@ def _cmd_record_failure(args) -> int:
     if not run.emit(final_status="failed", failure_mode=args.failure_mode):
         return 2
     print(f"record-failure: failure_mode={args.failure_mode} -> {telemetry}", file=sys.stderr)
+    return 0
+
+
+def _cmd_publish_attempt_record(args) -> int:
+    """S6 F-2: publish this attempt's aggregation files as one neutral
+    check run on the PR head (telemetry/attempt_record.py), so they survive
+    the artifact deletion GitHub performs on re-run. Runs after the review
+    and record-failure steps, so completed and failed attempts alike are
+    recorded. Publishes only this execution's own telemetry; anything else
+    fails closed (exit 2, nothing published)."""
+    if not _REPOSITORY_RE.match(args.repository) or args.pr < 1 \
+            or not _SHA_RE.match(args.head_sha):
+        print("publish-attempt-record: invalid --repository, --pr or --head-sha", file=sys.stderr)
+        return 2
+    artifacts = Path(args.artifacts_dir)
+    files: dict[str, bytes] = {}
+    for name in RECORD_FILES:
+        path = artifacts / name
+        if path.is_file() and not path.is_symlink():
+            files[name] = path.read_bytes()
+    telemetry = files.get("telemetry.jsonl", b"")
+    if not telemetry.strip():
+        print("publish-attempt-record: no telemetry in this attempt; nothing to record",
+              file=sys.stderr)
+        return 0
+    try:
+        events = [json.loads(line) for line in telemetry.decode("utf-8").splitlines() if line.strip()]
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        print("publish-attempt-record: telemetry is not JSONL; not published", file=sys.stderr)
+        return 2
+    want = {"provider": "github_actions", "run_id": args.run_id, "run_attempt": args.run_attempt}
+    for event in events:
+        if not isinstance(event, dict) or event.get("execution") != want \
+                or event.get("repository") != args.repository or event.get("pr_number") != args.pr:
+            print("publish-attempt-record: telemetry is not this execution's own; not published",
+                  file=sys.stderr)
+            return 2
+    try:
+        text = build_record_text(args.run_id, args.run_attempt, files)
+    except AttemptRecordError as exc:
+        print(f"publish-attempt-record: {exc.reason}: {exc}", file=sys.stderr)
+        return 2
+    base = default_config().github_api
+    config = GitHubApiConfig(**{**base.__dict__, "max_requests_per_run": 10})
+    token = os.environ.get(args.token_env, "")
+    if not token:
+        print(f"publish-attempt-record: no token in ${args.token_env}", file=sys.stderr)
+        return 2
+    client = GitHubClient(token, config, RequestBudget(config), session=_new_session())
+    try:
+        check_id = publish_attempt_record(client, args.repository, args.head_sha,
+                                          args.run_id, args.run_attempt, text)
+    except FaradayReviewError as exc:
+        print(f"publish-attempt-record: {exc.reason}: {exc}", file=sys.stderr)
+        return 2
+    print(f"publish-attempt-record: check run {check_id} ({len(events)} event(s), "
+          f"files {','.join(sorted(files))})", file=sys.stderr)
     return 0
 
 
@@ -608,6 +709,22 @@ def main(argv: list[str] | None = None) -> int:
                              "never used for review")
     shadow.add_argument("--base-sha", default=None,
                         help="event-payload base SHA; identity for a failure record only")
+    shadow.add_argument("--checks-pending-timeout", type=_nonnegative_int, default=None,
+                        help="seconds to wait for a still-running required check before the run "
+                             "ends failed (required_checks_pending_timeout); default 900, max 1800")
+    shadow.add_argument("--checks-missing-grace", type=_nonnegative_int, default=None,
+                        help="seconds a required check with no run yet may take to appear before "
+                             "it counts as missing; default 300, max 900")
+
+    par = sub.add_parser("publish-attempt-record",
+                         help="publish this attempt's telemetry as a rerun-durable check run")
+    par.add_argument("--repository", required=True)
+    par.add_argument("--pr", type=int, required=True)
+    par.add_argument("--head-sha", required=True)
+    par.add_argument("--run-id", type=_positive_int, required=True)
+    par.add_argument("--run-attempt", type=_positive_int, required=True)
+    par.add_argument("--artifacts-dir", default="artifacts/reviews")
+    par.add_argument("--token-env", default="GITHUB_TOKEN")
 
     rec = sub.add_parser("record-failure",
                          help="record one failed run when the review step left no telemetry (no network)")
@@ -692,6 +809,8 @@ def main(argv: list[str] | None = None) -> int:
         return _shadow_run(args)
     if args.command == "record-failure":
         return _cmd_record_failure(args)
+    if args.command == "publish-attempt-record":
+        return _cmd_publish_attempt_record(args)
     if args.command == "collect":
         return _cmd_collect(args)
     if args.command == "preflight":
