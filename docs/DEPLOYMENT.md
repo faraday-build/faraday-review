@@ -118,6 +118,78 @@ The repository is public, so callers in any organization can use it.
   manifest; a record that fails any check is listed as rejected and
   aggregation reports `attempt_record_rejected`. Fork PRs skip it.
 
+## Qualification monitor (scheduled, public callers only)
+
+`.github/workflows/qualification-monitor.yml` is a second reusable workflow:
+a read-only daily status view of the caller's own E1 qualification record.
+It runs `collect` → `aggregate` → `readiness` (fresh, no prior ledger) over
+the caller's unexpired shadow-run artifacts, then `faraday-review
+monitor-report`, writes the Markdown to the job summary, and keeps **one**
+issue in the caller repository, *Faraday Review qualification status*
+(label `faraday-review-qualification`, author `github-actions[bot]`), whose
+body is replaced in place. A comment is added only when the checkpoint level
+rises (CP-5/10/15/20), a new anomaly appears (a kind's count grows), or a
+CRITICAL authorization anomaly appears; the last reported state is kept in a
+hidden marker in the body. It never approves, merges or labels a pull
+request, writes no repository contents, and touches no variable or secret.
+
+Caller (pin both SHAs to the same faraday-review main commit):
+
+```yaml
+name: faraday-review-qualification-monitor
+on:
+  schedule:
+    - cron: "0 7 * * *"   # daily, after the 06:00 UTC Drift Gate
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+  issues: write
+jobs:
+  monitor:
+    if: vars.FARADAY_REVIEW_MONITOR_ENABLED == 'true'
+    uses: faraday-build/faraday-review/.github/workflows/qualification-monitor.yml@<40-hex SHA>
+    with:
+      reviewer_sha: <same 40-hex SHA>
+```
+
+- **Fail-closed pre-check.** Before any run or artifact request the
+  workflow verifies the caller's reviewer binding (as `shadow.yml` does),
+  that the live API reports the caller public, and that the reviewer's
+  committed `docs/qualification/enrollment.json` at the pinned SHA enrolls
+  it as public. Only that one committed entry, and the caller's own entries
+  of the committed `synthetic-prs.json`, are used. `monitor-report` refuses
+  (exit 2, nothing written) if any input names another repository.
+- **Permissions.** Job `monitor`: `contents`, `actions`, `checks`,
+  `pull-requests` read. Job `status-issue`: `contents: read`, `issues:
+  write`, nothing else (the only `issues: write` the hardening guard
+  admits). It creates the label definition once, if absent.
+- **Cadence and cost.** Recommended daily at 07:00 UTC plus
+  `workflow_dispatch`: two short jobs per day. API use is bounded by
+  `max_requests` (default 2000, max 5000) for `collect`; the issue job makes
+  at most six requests.
+- **Failure notification.** CRITICAL exits non-zero, so GitHub's failed-run
+  notification fires, and the issue gets a comment carrying the kill-switch
+  command. Any other failure (binding, visibility, enrollment, collection,
+  refusal) fails the run before the issue is touched, and nothing is
+  uploaded: the artifact is published only after `monitor-report` accepted
+  every input. A required comment is posted before the body (and its
+  marker) is updated, so a failed comment is retried on the next run.
+- **Kill switches.** Monitor: `gh variable delete
+  FARADAY_REVIEW_MONITOR_ENABLED -R <caller>`. On CRITICAL (an archived
+  decision, telemetry or attempt record with `approval_authorized` or
+  `merge_authorized` not false, or a risk/authorization field outside its
+  expected values): `gh variable delete FARADAY_REVIEW_SHADOW_ENABLED -R
+  <caller>` at once, preserve the run artifact, report.
+- **Rollback.** Delete the caller workflow (or unset the variable), or
+  revert this workflow by PR. The status issue may be closed by hand;
+  nothing else is written. Archived artifacts and ledgers are never deleted.
+- **Privacy boundary.** Public callers only. A private caller must not use
+  this workflow until founder decision P8 (private archive location); its
+  record would land in a public CI log and job summary.
+
 ## Shadow pilot constraints (Phase 1.14)
 
 One low-risk repository only: docs- or test-focused, no production
@@ -130,6 +202,7 @@ Approval and merge stay disabled regardless of risk class.
 |---|---|---|
 | `GITHUB_TOKEN` | ambient Actions token | collection + publication (permissions in GITHUB_PERMISSIONS.md) |
 | `FARADAY_POLICY_DIGEST` | Actions variable | pinned policy digest; absence ⇒ every run Blocks `policy_digest_unpinned` |
+| `FARADAY_REVIEW_MONITOR_ENABLED` | Actions variable (caller) | `true` enables the qualification monitor caller; delete it to stop the monitor |
 
 No other secrets. The plane never handles deploy keys, cloud credentials,
 or model API keys (no model in Phase 1).

@@ -137,8 +137,11 @@ repository name, PR numbers, SHAs, risk classes and blocking reasons, so
   (`... exists with different bytes`, `refusing non-regular destination`) name
   the archive path. Inside a private archive that path contains
   `<owner>/<repo>`. Disposition:
-  - `collect`, `aggregate` and `readiness` are operator commands and are not
-    wired into any workflow.
+  - `collect`, `aggregate` and `readiness` are operator commands. The only
+    workflow that runs them is the qualification monitor (below), which
+    refuses any caller that is not live-public and enrolled public, writes
+    only to the runner's temp directory, and never passes a private
+    enrollment or `--private-archive-dir`.
   - The only qualification step in CI (`qualification-reproducible`) reads
     committed, O3-guarded public files.
   - The `shadow-run` and `record-failure` messages concern only the caller's
@@ -171,6 +174,30 @@ adjudicated qualifying real PRs and requires zero missed mandatory
 escalations with a known, non-zero denominator (`PHASE_2_INPUTS.md`, "Gate
 criterion"); its
 threshold has a hard floor of 20, and `readiness` exits 2 on any lower value.
+
+### Scheduled qualification monitor
+
+`qualification-monitor.yml` (DEPLOYMENT.md) automates the read-only
+monitoring cadence for **public** enrolled callers: daily (recommended 07:00
+UTC, after the Drift Gate) plus `workflow_dispatch`, one bounded `collect`
+(`max_requests`), and one deduplicated status issue in the caller. It is the
+only workflow that runs `collect`, and it may do so in a public CI log only
+because the caller is verified public (live API) and enrolled as public at
+the pinned reviewer SHA before any request; the private-caller rule above
+still holds, and a private caller must not use it until P8. `faraday-review
+monitor-report` is pure (no network, no clock): it copies every figure from
+`readiness` (gate count, exclusions, escalation condition and 2×2,
+agreement, latency, infrastructure failures, anomalies), lists pending
+founder adjudications from readiness `counted_prs` status `unadjudicated`,
+reports checkpoints CP-5/10/15/20 and runs not completed, and scans every
+archived decision/telemetry/attempt record for authorization fields. Any
+`approval_authorized` / `merge_authorized` not false, or a risk/authorization
+field outside its expected values, is CRITICAL: the run fails and the issue
+comment says `gh variable delete FARADAY_REVIEW_SHADOW_ENABLED -R <caller>`.
+Stop the monitor with `gh variable delete FARADAY_REVIEW_MONITOR_ENABLED -R
+<caller>`; roll back by deleting the caller or reverting the workflow. The
+monitor changes no gate, no ledger and no committed record; committing a
+readiness snapshot remains a founder decision.
 
 ### Failed runs leave telemetry
 

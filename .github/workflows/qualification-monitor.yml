@@ -1,0 +1,318 @@
+# Reusable Faraday Review qualification monitor (E1 monitoring).
+#
+# Read-only status view of the caller's own qualification record: a fresh
+# `collect` -> `aggregate` -> `readiness` over the caller's shadow-run
+# artifacts, then `monitor-report`. The Markdown goes to the job summary and
+# to ONE deduplicated issue in the caller repository ("Faraday Review
+# qualification status"), updated in place; a comment is added only when the
+# checkpoint level increases, a new anomaly appears, or a CRITICAL
+# authorization anomaly appears. CRITICAL fails the run.
+#
+# It approves nothing, merges nothing, labels no pull request, writes no
+# repository contents and touches no variable or secret. It never uses a
+# private enrollment or a private archive: the caller must be PUBLIC (live
+# API) and enrolled as public in this repository's committed
+# docs/qualification/enrollment.json at the pinned SHA, or the run fails
+# closed before anything is collected (OPERATING_MODEL: never run collect
+# with private inputs in a public CI log). Private callers must not use this
+# workflow until founder decision P8.
+#
+# Callers MUST pin this workflow by full commit SHA and pass the same SHA as
+# `reviewer_sha`; the binding is verified against the run's
+# referenced_workflows before any reviewer code is checked out. Callers pass
+# no secrets (none are declared). See docs/DEPLOYMENT.md.
+name: faraday-review-qualification-monitor
+
+on:
+  workflow_call:
+    inputs:
+      reviewer_sha:
+        description: "Full 40-hex faraday-review commit SHA; must equal the SHA in the caller's `uses:` ref and be reachable from faraday-review main."
+        type: string
+        required: true
+      max_requests:
+        description: "GitHub API request budget for collect (1..5000)."
+        type: number
+        required: false
+        default: 2000
+      stall_hours:
+        description: "A run not completed after this many hours is reported as stalled (1..168)."
+        type: number
+        required: false
+        default: 6
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: faraday-review-qualification-monitor
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read
+    outputs:
+      report_ready: ${{ steps.report.outputs.ready }}
+      critical: ${{ steps.report.outputs.critical }}
+    env:
+      REVIEWER_REPO: faraday-build/faraday-review
+    steps:
+      - name: Validate event and inputs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REVIEWER_SHA: ${{ inputs.reviewer_sha }}
+          MAX_REQUESTS: ${{ inputs.max_requests }}
+          STALL_HOURS: ${{ inputs.stall_hours }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            schedule|workflow_dispatch) ;;
+            *) echo "::error::the qualification monitor supports only schedule and workflow_dispatch (got '$EVENT_NAME')."; exit 2 ;;
+          esac
+          if ! printf '%s' "$REVIEWER_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::reviewer_sha must be a full 40-hex commit SHA."; exit 2
+          fi
+          if ! printf '%s' "$MAX_REQUESTS" | grep -Eq '^[0-9]+$' || [ "$MAX_REQUESTS" -lt 1 ] || [ "$MAX_REQUESTS" -gt 5000 ]; then
+            echo "::error::max_requests must be an integer in 1..5000."; exit 2
+          fi
+          if ! printf '%s' "$STALL_HOURS" | grep -Eq '^[0-9]+$' || [ "$STALL_HOURS" -lt 1 ] || [ "$STALL_HOURS" -gt 168 ]; then
+            echo "::error::stall_hours must be an integer in 1..168."; exit 2
+          fi
+
+      - name: Verify reviewer SHA binding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CALLER_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          REVIEWER_SHA: ${{ inputs.reviewer_sha }}
+        run: |
+          set -euo pipefail
+          # The caller's run must reference qualification-monitor.yml at
+          # exactly REVIEWER_SHA, pinned by that full SHA.
+          gh api "repos/$CALLER_REPO/actions/runs/$RUN_ID" \
+            --jq '.referenced_workflows[] | select(.path | startswith("'"$REVIEWER_REPO"'/.github/workflows/qualification-monitor.yml@")) | "\(.sha) \(.path)"' \
+            > referenced.txt
+          if [ "$(wc -l < referenced.txt)" -ne 1 ]; then
+            echo "::error::expected exactly one referenced $REVIEWER_REPO qualification-monitor.yml; got:"; cat referenced.txt; exit 2
+          fi
+          read -r ref_sha ref_path < referenced.txt
+          if [ "$ref_sha" != "$REVIEWER_SHA" ] || [ "${ref_path##*@}" != "$REVIEWER_SHA" ]; then
+            echo "::error::reviewer_sha binding mismatch: uses=${ref_path##*@} resolved=$ref_sha input=$REVIEWER_SHA"
+            exit 2
+          fi
+          # Only reviewed, merged code: REVIEWER_SHA must be reachable from main.
+          status=$(gh api "repos/$REVIEWER_REPO/compare/$REVIEWER_SHA...main" --jq .status)
+          if [ "$status" != "ahead" ] && [ "$status" != "identical" ]; then
+            echo "::error::reviewer_sha is not on $REVIEWER_REPO main (compare status: $status)"
+            exit 2
+          fi
+          echo "binding ok: $REVIEWER_SHA ($status)"
+
+      - name: Check out reviewer at pinned SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: faraday-build/faraday-review
+          ref: ${{ inputs.reviewer_sha }}
+          path: .faraday-review
+          persist-credentials: false
+
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+
+      - name: Verify caller is public and enrolled
+        # Fail closed BEFORE any run or artifact request: the live API must
+        # report the caller public, and the reviewer's committed enrollment
+        # at the pinned SHA must enroll it as public. Only that one committed
+        # entry (and the caller's own synthetic exclusions) is used.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CALLER_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          observed=$(gh api "repos/$CALLER_REPO" --jq '"\(.visibility) \(.private)"')
+          if [ "$observed" != "public false" ]; then
+            echo "::error::the caller repository is not public; the qualification monitor runs only for public callers (founder decision P8). Nothing was collected."
+            exit 2
+          fi
+          W="$RUNNER_TEMP/faraday-monitor"
+          mkdir -p "$W/out"
+          python -I - .faraday-review/docs/qualification/enrollment.json \
+            .faraday-review/docs/qualification/synthetic-prs.json "$CALLER_REPO" "$W" <<'PY'
+          import json, sys
+          enrollment_path, synthetic_path, repo, work = sys.argv[1:5]
+          key = repo.casefold()
+          with open(enrollment_path, encoding="utf-8") as fh:
+              enrollment = json.load(fh)
+          mine = [e for e in enrollment if isinstance(e, dict)
+                  and str(e.get("repository", "")).casefold() == key]
+          if len(mine) != 1 or mine[0].get("visibility") != "public":
+              print("::error::the caller is not enrolled as public in the reviewer's committed "
+                    "docs/qualification/enrollment.json at the pinned SHA. Nothing was collected.")
+              sys.exit(2)
+          with open(synthetic_path, encoding="utf-8") as fh:
+              synthetic = json.load(fh)
+          own = [s for s in synthetic if isinstance(s, dict)
+                 and str(s.get("repository", "")).casefold() == key]
+          for name, doc in (("enrollment.json", mine), ("synthetic-prs.json", own)):
+              with open(f"{work}/{name}", "w", encoding="utf-8") as fh:
+                  json.dump(doc, fh, indent=2, sort_keys=True)
+                  fh.write("\n")
+          print(f"enrolled public: 1 entry; synthetic exclusions: {len(own)}")
+          PY
+
+      - name: Install reviewer
+        run: python -m pip install --quiet ./.faraday-review
+
+      - name: Collect (read-only)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MAX_REQUESTS: ${{ inputs.max_requests }}
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/faraday-monitor"
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          printf '%s\n' "$now" > "$W/now.txt"
+          mkdir -p "$W/archive"
+          faraday-review collect --enrollment "$W/enrollment.json" --archive-dir "$W/archive" \
+            --collected-at "$now" --max-requests "$MAX_REQUESTS"
+
+      - name: Aggregate and readiness
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/faraday-monitor"
+          now=$(cat "$W/now.txt")
+          # Fresh every run: the whole unexpired archive is re-folded; no
+          # prior ledger is committed for this view.
+          faraday-review aggregate --input-dir "$W/archive" --output "$W/out/ledger.json" \
+            --generated-at "$now" --enrollment "$W/enrollment.json"
+          faraday-review readiness --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
+            --generated-at "$now" --output "$W/out/readiness.json" --enrollment "$W/enrollment.json"
+
+      - name: Qualification status report
+        id: report
+        env:
+          CALLER_REPO: ${{ github.repository }}
+          STALL_HOURS: ${{ inputs.stall_hours }}
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/faraday-monitor"
+          now=$(cat "$W/now.txt")
+          manifests=()
+          for m in "$W"/archive/collection-manifest-*.json; do
+            [ -f "$m" ] || continue
+            manifests+=(--manifest "$m")
+            cp "$m" "$W/out/"
+          done
+          rc=0
+          faraday-review monitor-report --readiness "$W/out/readiness.json" --ledger "$W/out/ledger.json" \
+            "${manifests[@]}" --archive-dir "$W/archive" --repository "$CALLER_REPO" \
+            --generated-at "$now" --stall-hours "$STALL_HOURS" \
+            --output "$W/out/status.json" --markdown-output "$W/out/status.md" || rc=$?
+          case "$rc" in
+            0) crit=false ;;
+            3) crit=true ;;
+            *) echo "::error::monitor-report refused or failed (exit $rc); no status was produced."; exit "$rc" ;;
+          esac
+          cat "$W/out/status.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "critical=$crit" >> "$GITHUB_OUTPUT"
+
+      - name: Upload qualification status
+        # Only once monitor-report accepted every input (OK, ATTENTION or
+        # CRITICAL): a refused input set may name another repository and
+        # is never published (Codex P1, #17).
+        if: always() && steps.report.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: faraday-review-qualification-status-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faraday-monitor/out
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Fail on CRITICAL
+        if: steps.report.outputs.critical == 'true'
+        env:
+          CALLER_REPO: ${{ github.repository }}
+        run: |
+          echo "::error::CRITICAL authorization anomaly. Run now: gh variable delete FARADAY_REVIEW_SHADOW_ENABLED -R $CALLER_REPO"
+          exit 1
+
+  status-issue:
+    needs: monitor
+    # Runs on CRITICAL too (the monitor job then fails after its report).
+    if: always() && needs.monitor.outputs.report_ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: faraday-review-qualification-status-issue
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Download qualification status
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: faraday-review-qualification-status-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faraday-monitor/out
+
+      - name: Check out reviewer at pinned SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: faraday-build/faraday-review
+          ref: ${{ inputs.reviewer_sha }}
+          path: .faraday-review
+          persist-credentials: false
+
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: "3.11"
+
+      - name: Install reviewer
+        run: python -m pip install --quiet ./.faraday-review
+
+      - name: Update status issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CALLER_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          W="$RUNNER_TEMP/faraday-monitor"
+          LABEL=faraday-review-qualification
+          TITLE="Faraday Review qualification status"
+          # The label definition is created once so the issue can be found
+          # by label + title + author; it is applied only to this issue.
+          if ! gh api "repos/$CALLER_REPO/labels/$LABEL" --silent 2>/dev/null; then
+            gh api -X POST "repos/$CALLER_REPO/labels" -f name="$LABEL" -f color=5319e7 \
+              -f description="Faraday Review qualification monitor status (automated)" --silent
+          fi
+          # Our issue only: open, labelled, titled, authored by
+          # github-actions[bot] and not a pull request; the oldest wins.
+          number=$(gh api "repos/$CALLER_REPO/issues?state=open&labels=$LABEL&creator=github-actions%5Bbot%5D&per_page=100" \
+            | python -I -c 'import json,sys; t=sys.argv[1]; xs=sorted(i["number"] for i in json.load(sys.stdin) if i.get("pull_request") is None and i.get("title") == t and (i.get("user") or {}).get("login") == "github-actions[bot]"); print(xs[0] if xs else "")' "$TITLE")
+          if [ -z "$number" ]; then
+            faraday-review monitor-notify --status "$W/out/status.json" --repository "$CALLER_REPO" \
+              --comment-output "$W/comment.md"
+            gh api -X POST "repos/$CALLER_REPO/issues" -f title="$TITLE" -F body=@"$W/out/status.md" \
+              -f "labels[]=$LABEL" --jq '"created issue #\(.number)"'
+            exit 0
+          fi
+          gh api "repos/$CALLER_REPO/issues/$number" --jq '.body // ""' > "$W/previous-body.md"
+          faraday-review monitor-notify --status "$W/out/status.json" --repository "$CALLER_REPO" \
+            --previous-body "$W/previous-body.md" --comment-output "$W/comment.md"
+          # Comment first, then advance the marker in the body: if the
+          # comment fails the body keeps the old marker, so the next run
+          # notifies again (Codex P2, #17).
+          if [ -s "$W/comment.md" ]; then
+            printf '\n[Monitor run](%s)\n' "$RUN_URL" >> "$W/comment.md"
+            gh api -X POST "repos/$CALLER_REPO/issues/$number/comments" -F body=@"$W/comment.md" --silent
+          fi
+          gh api -X PATCH "repos/$CALLER_REPO/issues/$number" -F body=@"$W/out/status.md" --silent
+          echo "updated issue #$number"

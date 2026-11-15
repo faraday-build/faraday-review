@@ -59,6 +59,13 @@ from .telemetry.qualification import (
     readiness,
     require_timestamp,
 )
+from .telemetry.monitor import (
+    DEFAULT_STALL_HOURS,
+    EXIT_CRITICAL,
+    MonitorError,
+    monitor_notify,
+    monitor_report,
+)
 from .telemetry.throughput import compute_throughput
 from .telemetry.writer import append_event, read_events
 
@@ -684,6 +691,62 @@ def _cmd_readiness(args) -> int:
     return code
 
 
+def _cmd_monitor_report(args) -> int:
+    """Pure status view over local qualification files (no network, no
+    clock). Exit 0 = OK/ATTENTION, 3 = CRITICAL (outputs written), 2 =
+    refused or invalid input (nothing written)."""
+    try:
+        status, markdown = monitor_report(
+            readiness_path=Path(args.readiness), ledger_path=Path(args.ledger),
+            manifest_paths=[Path(m) for m in args.manifest], archive=Path(args.archive_dir),
+            repository=args.repository, generated_at=args.generated_at,
+            stall_hours=args.stall_hours)
+    except (MonitorError, QualificationError) as exc:
+        print(f"monitor-report: {getattr(exc, 'reason', 'invalid_input')}: {exc}", file=sys.stderr)
+        return 2
+    out, md = Path(args.output), Path(args.markdown_output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    md.parent.mkdir(parents=True, exist_ok=True)
+    write_canonical(out, status)
+    md.write_text(markdown, encoding="utf-8")
+    q = status["qualification"]
+    print(f"monitor-report: status={status['status']} adjudicated_qualifying="
+          f"{q['adjudicated_qualifying']}/{q['threshold']} "
+          f"checkpoint={status['checkpoint']['reached']} "
+          f"anomalies={status['anomalies']['total']} "
+          f"pending_adjudications={len(status['pending_adjudications'])}", file=sys.stderr)
+    if status["status"] == "CRITICAL":
+        print(f"monitor-report: CRITICAL authorization anomaly; run now: "
+              f"{status['kill_switch']['command']}", file=sys.stderr)
+        return EXIT_CRITICAL
+    return 0
+
+
+def _cmd_monitor_notify(args) -> int:
+    """Decide whether the status issue gets a comment (no network)."""
+    previous = None
+    if args.previous_body:
+        try:
+            previous = Path(args.previous_body).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            print("monitor-notify: cannot read --previous-body", file=sys.stderr)
+            return 2
+    try:
+        reasons, comment = monitor_notify(status_path=Path(args.status), previous_body=previous,
+                                          repository=args.repository)
+    except MonitorError as exc:
+        print(f"monitor-notify: {exc.reason}: {exc}", file=sys.stderr)
+        return 2
+    target = Path(args.comment_output)
+    if target.exists():
+        target.unlink()
+    if comment is not None:
+        target.write_text(comment, encoding="utf-8")
+    print(f"monitor-notify: comment={'yes' if comment else 'no'} "
+          f"reasons={','.join(reasons) or 'none'}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="faraday-review")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -794,7 +857,34 @@ def main(argv: list[str] | None = None) -> int:
                           "--output is inside a git checkout (default: its "
                           "docs/qualification/enrollment.json)")
 
+    mon = sub.add_parser("monitor-report",
+                         help="qualification status view from local readiness/ledger/archive "
+                              "(pure, read-only)")
+    mon.add_argument("--readiness", required=True)
+    mon.add_argument("--ledger", required=True)
+    mon.add_argument("--manifest", action="append", default=[],
+                     help="collection manifest (repeatable; default: those at the archive root)")
+    mon.add_argument("--archive-dir", required=True)
+    mon.add_argument("--repository", required=True,
+                     help="the only repository identity any input may name")
+    mon.add_argument("--generated-at", required=True, help="explicit ISO-8601 timestamp; no clock is read")
+    mon.add_argument("--stall-hours", type=_positive_int, default=DEFAULT_STALL_HOURS)
+    mon.add_argument("--output", required=True, help="status JSON")
+    mon.add_argument("--markdown-output", required=True, help="status Markdown (issue body)")
+
+    ntf = sub.add_parser("monitor-notify",
+                         help="decide whether the status issue gets a comment (no network)")
+    ntf.add_argument("--status", required=True)
+    ntf.add_argument("--repository", required=True)
+    ntf.add_argument("--previous-body", default=None,
+                     help="current issue body; omit when the issue does not exist yet")
+    ntf.add_argument("--comment-output", required=True)
+
     args = parser.parse_args(argv)
+    if args.command == "monitor-report":
+        return _cmd_monitor_report(args)
+    if args.command == "monitor-notify":
+        return _cmd_monitor_notify(args)
     qualification = {"adjudicate": _cmd_adjudicate, "aggregate": _cmd_aggregate,
                      "readiness": _cmd_readiness}
     if args.command in qualification:
