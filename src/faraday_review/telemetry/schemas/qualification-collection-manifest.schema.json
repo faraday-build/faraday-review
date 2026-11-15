@@ -26,6 +26,48 @@
               "additionalProperties": false,
               "required": ["run_id", "run_attempt", "status", "conclusion", "created_at", "artifacts"],
               "properties": {
+                "attempt_records": {
+                  "description": "S6 F-2: attempts whose artifact telemetry was absent (GitHub deletes earlier-attempt artifacts on re-run), read back from their `faraday-review / attempt-record` check runs and verified. Present only when at least one candidate check run exists.",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["attempt", "provenance", "external_id", "status", "accepted_check_run_ids", "rejected", "files"],
+                    "properties": {
+                      "attempt": { "type": "integer", "minimum": 1 },
+                      "provenance": { "const": "check_run" },
+                      "external_id": { "type": "string", "pattern": "^faraday-review-attempt:[1-9][0-9]*:[1-9][0-9]*$" },
+                      "status": { "enum": ["accepted", "rejected"] },
+                      "accepted_check_run_ids": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+                      "rejected": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["check_run_id", "reason"],
+                          "properties": {
+                            "check_run_id": { "type": "integer", "minimum": 1 },
+                            "reason": { "enum": ["malformed", "sha256_mismatch", "identity_mismatch", "identity_unverifiable", "untrusted_app", "invalid_telemetry", "conflicting_records"] }
+                          }
+                        }
+                      },
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["name", "path", "sha256", "size"],
+                          "properties": {
+                            "name": { "enum": ["telemetry.jsonl", "decision.json", "run-binding.json"] },
+                            "path": { "type": "string", "minLength": 1 },
+                            "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+                            "size": { "type": "integer", "minimum": 0 }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
                 "run_id": { "type": "integer", "minimum": 1 },
                 "run_attempt": { "type": "integer", "minimum": 1 },
                 "status": { "type": "string", "minLength": 1 },

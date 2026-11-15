@@ -35,6 +35,16 @@ on:
         type: string
         required: false
         default: ""
+      required_checks_pending_timeout:
+        description: "Seconds to wait for a required check that is still running (0..1800). Still pending at the deadline => the run ends failed (required_checks_pending_timeout) and is never classified."
+        type: number
+        required: false
+        default: 900
+      required_checks_missing_grace:
+        description: "Seconds a required check with no run yet may take to appear (0..900, <= the pending timeout); after that it counts as missing (required_check_missing)."
+        type: number
+        required: false
+        default: 300
 
 permissions:
   contents: read
@@ -45,7 +55,9 @@ permissions:
 jobs:
   shadow:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Covers the longest permitted required-check wait (1800 s) plus the
+    # rest of the job; tests/guards/test_shadow_workflow.py pins this.
+    timeout-minutes: 40
     permissions:
       contents: read
       pull-requests: write
@@ -151,6 +163,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           FARADAY_POLICY_DIGEST: ${{ inputs.policy_digest }}
           REQUIRED_CHECKS: ${{ inputs.required_checks }}
+          # Bounded required-check wait (S6 F-1); the CLI enforces hard maxima.
+          CHECKS_PENDING_TIMEOUT: ${{ inputs.required_checks_pending_timeout }}
+          CHECKS_MISSING_GRACE: ${{ inputs.required_checks_missing_grace }}
           CALLER_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -170,7 +185,9 @@ jobs:
                 --policy-bundle .faraday-governance/review-policy
                 --repo-dir target --artifacts-dir "$artifacts"
                 --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT"
-                --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA")
+                --head-sha "$HEAD_SHA" --base-sha "$BASE_SHA"
+                --checks-pending-timeout "$CHECKS_PENDING_TIMEOUT"
+                --checks-missing-grace "$CHECKS_MISSING_GRACE")
           while IFS= read -r check; do
             check="${check#"${check%%[![:space:]]*}"}"; check="${check%"${check##*[![:space:]]}"}"
             [ -n "$check" ] && args+=(--required-check "$check")
@@ -235,6 +252,35 @@ jobs:
               json.dump({k.lower(): os.environ[k] for k in keys}, fh, sort_keys=True, indent=2)
               fh.write("\n")
           PY
+
+      - name: Publish attempt record
+        # S6 F-2: GitHub deletes a run's earlier-attempt artifacts when the
+        # run is re-run; check runs survive. Every attempt (completed or
+        # failed, including a record-failure record; this step runs after
+        # both and after a cancellation) publishes its own telemetry,
+        # decision and run binding as one neutral `faraday-review /
+        # attempt-record` check run with external_id
+        # faraday-review-attempt:<run_id>:<run_attempt>. `collect` verifies
+        # it and uses it only when the attempt's artifact is gone. Fork PRs
+        # have a read-only token and are skipped.
+        if: always() && steps.install.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CALLER_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REPO" != "$CALLER_REPO" ]; then
+            echo "fork pull request: attempt record skipped"
+            exit 0
+          fi
+          faraday-review publish-attempt-record --repository "$CALLER_REPO" --pr "$PR_NUMBER" \
+            --head-sha "$HEAD_SHA" --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" \
+            --artifacts-dir "$RUNNER_TEMP/faraday-artifacts"
 
       - name: Upload shadow evidence
         if: always()

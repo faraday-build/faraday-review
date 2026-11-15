@@ -89,3 +89,32 @@ def publish_summary_comment(
         timeout=REQUEST_TIMEOUT_SECONDS,
     )
     return int(response.json()["id"])
+
+
+def publish_attempt_record(client: GitHubClient, repository: str, head_sha: str,
+                           run_id: int, run_attempt: int, text: str) -> int:
+    """One neutral check run per shadow attempt carrying that attempt's
+    telemetry (S6 F-2; telemetry/attempt_record.py). Check runs survive a
+    re-run; artifacts of earlier attempts do not. Authorizes nothing."""
+    from ..telemetry.attempt_record import ATTEMPT_RECORD_CHECK_NAME, external_id
+
+    response = client.request(
+        "POST",
+        f"/repos/{repository}/check-runs",
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        json_body={
+            "name": ATTEMPT_RECORD_CHECK_NAME,
+            "head_sha": head_sha,
+            "external_id": external_id(run_id, run_attempt),
+            "status": "completed",
+            "conclusion": "neutral",
+            "output": {
+                "title": f"attempt record run {int(run_id)} attempt {int(run_attempt)} "
+                         "(shadow, authorizes nothing)",
+                "summary": "Durable copy of this attempt's telemetry for qualification "
+                           "collection. Authorizes nothing.",
+                "text": text,
+            },
+        },
+    )
+    return int(response.json()["id"])

@@ -657,18 +657,24 @@ def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
     checked attempt:
 
     * an archived telemetry.jsonl: fine;
+    * else an accepted attempt record (S6 F-2: the attempt's telemetry read
+      back from its rerun-durable check run and verified by `collect`)
+      whose files the archive still holds: fine;
     * else an artifact for that attempt that expired unarchived:
       `artifact_expired_unarchived`;
     * else `run_without_telemetry` (failed, cancelled, or no artifact).
 
     An enrolled repository whose manifests list no run at all is
-    `enrolled_repo_without_runs`."""
+    `enrolled_repo_without_runs`. Every attempt-record copy `collect`
+    rejected (tampered, foreign, conflicting) is `attempt_record_rejected`:
+    never accepted, never silent."""
     present = {(i["path"], i["sha256"]) for i in inputs}
     repos: dict[str, dict[int, dict[str, Any]]] = {}
     # (repo, run) -> attempt -> conclusion of a snapshot where that attempt
     # was the run's completed, non-skipped final attempt (else None).
     completed: dict[tuple[str, int], dict[int, str | None]] = {}
     artifacts: dict[tuple[str, int], dict[int, dict[str, Any]]] = {}
+    recovered: dict[tuple[str, int], set[int]] = {}
     ordered = sorted(manifests, key=lambda m: (_sort_key_ts(m[1]["collected_at"]), m[0]))
     for _, manifest in ordered:
         for repo in manifest["repositories"]:
@@ -696,6 +702,24 @@ def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
                             continue
                         merged["files"].add(f["name"])
                         merged["telemetry"] = merged["telemetry"] or f["name"] == TELEMETRY_FILE
+                for rec in run.get("attempt_records", []):
+                    for rej in rec["rejected"]:
+                        anomalies.append({"kind": "attempt_record_rejected", "repository": key,
+                                          "run_id": run["run_id"], "run_attempt": rec["attempt"],
+                                          "check_run_id": rej["check_run_id"],
+                                          "reason": rej["reason"]})
+                    if rec["status"] != "accepted":
+                        continue
+                    held = True
+                    for f in rec["files"]:
+                        if (f["path"], f["sha256"]) not in present:
+                            anomalies.append({"kind": "collection_file_missing", "repository": key,
+                                              "run_id": run["run_id"],
+                                              "check_run_ids": rec["accepted_check_run_ids"],
+                                              "file": f["name"]})
+                            held = False
+                    if held and any(f["name"] == TELEMETRY_FILE for f in rec["files"]):
+                        recovered.setdefault((key, run["run_id"]), set()).add(rec["attempt"])
     for key in sorted(repos):
         runs = repos[key]
         if not runs:
@@ -707,6 +731,8 @@ def _collection_anomalies(manifests: list[tuple[str, dict[str, Any]]],
             for attempt in sorted(done):
                 mine = {aid: a for aid, a in arts.items() if a["attempt"] == attempt}
                 if any(a["telemetry"] for a in mine.values()):
+                    continue
+                if attempt in recovered.get((key, run_id), set()):
                     continue
                 lost = [(aid, a) for aid, a in sorted(mine.items())
                         if a["expired"] and not a["files"]]
