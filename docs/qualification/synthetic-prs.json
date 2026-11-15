@@ -1,1 +1,7 @@
-[]
+[
+  {
+    "pr_number": 23,
+    "reason": "S6 synthetic smoke (Faraday Review shadow acceptance, 2026-11-15); never merged",
+    "repository": "tomrivera-ops/ecosystem-audit"
+  }
+]

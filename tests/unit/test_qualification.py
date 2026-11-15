@@ -311,11 +311,22 @@ def test_synthetic_only_ledger_never_meets_gate(tmp_path):
     assert report["gate"]["met"] is False
 
 
-def test_committed_synthetic_list_is_valid_and_empty():
+# Every committed synthetic exclusion is pinned here, so adding or removing one
+# is a reviewed change to this test as well as to the list.
+REVIEWED_SYNTHETIC_PRS = [
+    {"repository": "tomrivera-ops/ecosystem-audit", "pr_number": 23,
+     "reason": "S6 synthetic smoke (Faraday Review shadow acceptance, 2026-11-15); never merged"},
+]
+
+
+def test_committed_synthetic_list_is_valid_and_exactly_the_reviewed_entries():
     path = Path(__file__).resolve().parents[2] / "docs" / "qualification" / "synthetic-prs.json"
     data = json.loads(path.read_text())
     assert local_validation_errors("synthetic-prs", data) == []
-    assert data == []
+    keys = [(e["repository"].lower(), e["pr_number"]) for e in data]
+    assert len(keys) == len(set(keys)), "duplicate (case-insensitive) synthetic entry"
+    assert sorted(data, key=lambda e: (e["repository"].lower(), e["pr_number"])) == \
+        sorted(REVIEWED_SYNTHETIC_PRS, key=lambda e: (e["repository"].lower(), e["pr_number"]))
 
 
 def test_agreement_confusion_and_latency(tmp_path):
