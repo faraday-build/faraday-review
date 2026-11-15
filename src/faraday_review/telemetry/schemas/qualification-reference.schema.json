@@ -38,10 +38,11 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["head_sha", "first_created_at"],
+              "required": ["head_sha", "first_created_at", "first_suite_at"],
               "properties": {
                 "head_sha": { "$ref": "#/$defs/sha" },
-                "first_created_at": { "type": ["string", "null"] }
+                "first_created_at": { "type": ["string", "null"] },
+                "first_suite_at": { "type": ["string", "null"], "description": "Earliest check-suite creation for this commit (GitHub, on push): head-transition evidence." }
               }
             }
           },
@@ -109,8 +110,9 @@
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["context", "app_id", "conclusion", "check_run_id"],
+                  "required": ["context", "app_id", "conclusion", "check_run_id", "evidence_kind"],
                   "properties": {
+                    "evidence_kind": { "enum": ["check_run", "status", null] },
                     "context": { "type": "string" },
                     "app_id": { "type": ["integer", "null"] },
                     "conclusion": { "type": ["string", "null"] },
