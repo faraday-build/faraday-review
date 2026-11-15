@@ -205,17 +205,20 @@ def _scan_archive(files: list[tuple[str, Path]]) -> tuple[list[dict[str, Any]], 
             for lineno, line in enumerate(text.splitlines(), start=1):
                 if not line.strip():
                     continue
+                # A malformed or non-object line is recorded and scanning
+                # continues: a later record with an authorization anomaly must
+                # still be found, so bad evidence can never hide a CRITICAL
+                # (Codex P2 on #17, r45).
                 try:
                     doc = json.loads(line)
                 except ValueError:
-                    unreadable.append(rel)
-                    break
+                    unreadable.append(f"{rel}:{lineno}")
+                    continue
                 documents.append(doc)
                 if isinstance(doc, dict):
                     _check_document(doc, rel=rel, line=lineno, required=False, findings=findings)
                 else:
-                    unreadable.append(rel)
-                    break
+                    unreadable.append(f"{rel}:{lineno}")
             continue
         try:
             doc = json.loads(text)

@@ -715,3 +715,59 @@ def test_marker_is_last_line_of_markdown(tmp_path):
     last = md.rstrip("\n").splitlines()[-1]
     assert last.startswith("<!-- faraday-review-qualification-monitor: ")
     assert last.endswith(" -->")
+
+
+# ----------------------------------------- Codex P2 (r45): JSONL scan continues past bad lines
+
+
+def _inject_before_violation(path: Path, bad_line: str) -> None:
+    """Rewrite a telemetry JSONL so a bad line precedes a record whose
+    merge_authorized is true; the original first record stays first."""
+    first = [json.loads(line) for line in path.read_text().splitlines() if line.strip()][0]
+    violation = dict(first, merge_authorized=True)
+    path.write_text(json.dumps(first, sort_keys=True, separators=(",", ":")) + "\n"
+                    + bad_line + "\n"
+                    + json.dumps(violation, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+@pytest.mark.parametrize("bad_line", ["{not json", "[1, 2, 3]", "42", "\"a string\"", "null"])
+@pytest.mark.parametrize("where", ["telemetry", "attempt_record"])
+def test_bad_jsonl_line_never_hides_a_later_authorization_violation(tmp_path, where, bad_line):
+    arc = Archive(tmp_path)
+    _adjudicated(arc, 1)
+    run_dir = arc.run(110, 10)
+    if where == "telemetry":
+        target = run_dir / "telemetry.jsonl"
+    else:
+        rec = arc.root / REPO / "110" / "attempt-record-a2"
+        rec.mkdir(parents=True)
+        target = rec / "telemetry.jsonl"
+        target.write_text((run_dir / "telemetry.jsonl").read_text())
+    _inject_before_violation(target, bad_line)
+    built = arc.build()
+    rc, status, md = _monitor(arc, built)
+    rel = target.relative_to(arc.root).as_posix()
+    # The violation on line 3 is still found: CRITICAL, kill switch, exit 3.
+    assert rc == 3
+    assert status["status"] == "CRITICAL"
+    assert {"path": rel, "line": 3, "field": "merge_authorized", "problem": "true"} in \
+        [{k: f[k] for k in ("path", "line", "field", "problem")}
+         for f in status["authorization"]["findings"]]
+    assert status["kill_switch"]["command"] == KILL
+    assert KILL in md and "Run now" in md
+    # The bad line is still surfaced as unreadable evidence, not silently dropped.
+    assert any(u == rel or u.startswith(rel + ":") for u in status["authorization"]["unreadable"])
+
+
+def test_bad_jsonl_line_alone_is_attention_not_ok(tmp_path):
+    arc = Archive(tmp_path)
+    _adjudicated(arc, 1)
+    run_dir = arc.run(110, 10)
+    target = run_dir / "telemetry.jsonl"
+    first = target.read_text().splitlines()[0]
+    target.write_text(first + "\n{not json\n")
+    built = arc.build()
+    rc, status, _ = _monitor(arc, built)
+    assert status["status"] == "ATTENTION" and rc == 0
+    rel = target.relative_to(arc.root).as_posix()
+    assert any(u == rel or u.startswith(rel + ":") for u in status["authorization"]["unreadable"])
