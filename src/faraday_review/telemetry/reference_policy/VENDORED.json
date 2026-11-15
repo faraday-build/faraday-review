@@ -1,0 +1,14 @@
+{
+  "files": {
+    "reference-tier-vectors.json": "45573d84cb1d7148656ab1de0894e249138cda6d8dabc289ff98652e55878eb2",
+    "tier-policy.json": "068a56ecaff11456222842c994cea88d9fcf1c082f2f421fa45236c9d7e97c86"
+  },
+  "source": "tomrivera-ops/agent-contracts",
+  "source_commit": "4b67ae59cf819f6b526543fc85cca674b74051fd",
+  "source_paths": {
+    "reference-tier-vectors.json": "decisions/ADR-0014/reference-tier-vectors.json",
+    "tier-policy.json": "decisions/ADR-0014/tier-policy.json"
+  },
+  "source_ref": "agent-contracts PR #15 (QA-1 amendment, Proposed, unmerged; stacked on #13). Re-pin to the merge commit once merged.",
+  "status": "proposed"
+}

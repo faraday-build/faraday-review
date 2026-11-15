@@ -2,6 +2,7 @@
   {
     "enrolled_from": "2026-11-15",
     "repository": "tomrivera-ops/ecosystem-audit",
+    "repository_floor": "A0",
     "visibility": "public",
     "workflow": ".github/workflows/faraday-review.yml"
   }
