@@ -61,6 +61,10 @@ class Api:
         self.routes[path][1]["total_count"] = len(runs)
         self.routes.setdefault(f"/repos/{repo}/actions/runs/{run_id}/artifacts",
                                (200, {"total_count": 0, "artifacts": []}))
+        # S6 F-2: attempts without artifact telemetry are looked up as
+        # attempt-record check runs on the run's head (none by default).
+        self.routes.setdefault(f"/repos/{repo}/commits/{HEAD}/check-runs",
+                               (200, {"total_count": 0, "check_runs": []}))
         return self
 
     def artifact(self, repo: str, run_id: int, members: dict[str, bytes] | None, *, pr: int = 1,

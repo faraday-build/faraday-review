@@ -11,6 +11,16 @@ zip. Files land at <archive>/<owner>/<repo>/<run id>/<artifact name>/<file>; an
 existing file is never overwritten with different bytes (fail closed).
 Each invocation writes one immutable collection manifest per archive root.
 
+Rerun durability (S6 F-2): GitHub deletes a run's earlier-attempt artifacts
+on re-run. For every attempt 1..run_attempt without an archived telemetry
+artifact, `collect` reads that attempt's `faraday-review / attempt-record`
+check run on the run's head (check runs survive re-runs), verifies it
+(external_id, app, sha256 of every file, schema, and identity: run id and
+attempt, repository, PR, head) and archives its files under
+<run id>/attempt-record-a<attempt>/ with provenance in the manifest's
+`attempt_records`. A record that fails any check is never archived; it is
+listed as rejected and surfaces as an anomaly in aggregation.
+
 Privacy: a repository is public only if the enrollment says so AND the
 live API says so. Private repositories are refused unless an archive
 directory outside the public repository is given; then their files and
@@ -31,10 +41,18 @@ from typing import Any
 
 from ..canonical import canonical_bytes
 from ..errors import FaradayReviewError
+from ..telemetry.attempt_record import (
+    ATTEMPT_RECORD_CHECK_NAME,
+    EXTERNAL_ID_RE,
+    AttemptRecordError,
+    parse_record_text,
+)
 from ..telemetry.qualification import (
     COLLECTION_MANIFEST_FORMAT,
     COLLECTION_MANIFEST_PREFIX,
     ARCHIVED_FILES,
+    TELEMETRY_FILE,
+    persisted_event_diagnostics,
     persisted_local_diagnostics,
     repo_identity,
     require_timestamp,
@@ -353,18 +371,158 @@ def _plan_artifact(client: GitHubClient, repository: str, run_id: int, artifact:
 
 
 def _complete_listing(client: GitHubClient, path: str, key: str, what: str,
-                      index: int) -> list[dict[str, Any]]:
+                      index: int, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Every item of a listing, or CollectionError. A listing that returns
     fewer distinct items than its total_count (a server-side result cap, or
     a page that never arrived) is refused, never archived as complete
     history (Codex r18 F2). The message names the enrollment entry index
     only, never the repository (it may be private)."""
-    items, total = client.paginate_key_counted(path, key)
+    items, total = client.paginate_key_counted(path, key, params)
     distinct = {int(item["id"]) for item in items}
     if total is not None and len(distinct) < total:
         raise CollectionError(f"enrollment entry #{index}: {what} listing truncated "
                               f"({len(distinct)} of {total} items); nothing archived")
     return items
+
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# The app that owns check runs created with a workflow's GITHUB_TOKEN.
+ATTEMPT_RECORD_APP = "github-actions"
+
+
+def _archived_attempt(root: Path, repository: str, run_id: int, attempt: int) -> bool:
+    """A previous collection already archived this attempt's artifact
+    telemetry (before GitHub deleted it): no recovery needed."""
+    owner, name = repository.split("/")
+    run_dir = root / owner / name / str(run_id)
+    if not run_dir.is_dir() or run_dir.is_symlink():
+        return False
+    for child in run_dir.iterdir():
+        match = ARTIFACT_NAME_RE.match(child.name)
+        if match and int(match.group(3)) == attempt and child.is_dir() and not child.is_symlink():
+            telemetry = child / TELEMETRY_FILE
+            if telemetry.is_file() and not telemetry.is_symlink():
+                return True
+    return False
+
+
+def _verify_attempt_record(check_run: dict[str, Any], repository: str, run_id: int, attempt: int,
+                           head_sha: str, prs: set[int]) -> dict[str, bytes]:
+    """Every byte of one attempt-record check run, or AttemptRecordError
+    with the rejection reason. Nothing is trusted from the check run that the
+    record does not prove about itself AND that matches the collected run."""
+    app = check_run.get("app")
+    if not isinstance(app, dict) or app.get("slug") != ATTEMPT_RECORD_APP:
+        raise AttemptRecordError("untrusted_app", "attempt record not created by GitHub Actions")
+    if check_run.get("head_sha") != head_sha:
+        raise AttemptRecordError("identity_mismatch", "attempt record head differs from the run")
+    output = check_run.get("output")
+    record = parse_record_text(output.get("text") if isinstance(output, dict) else None)
+    if (record["run_id"], record["run_attempt"]) != (run_id, attempt):
+        raise AttemptRecordError("identity_mismatch", "attempt record names another execution")
+    if not prs:
+        raise AttemptRecordError("identity_unverifiable", "the run names no pull request")
+    files = record["files"]
+    try:
+        events = [json.loads(line) for line in files[TELEMETRY_FILE].decode("utf-8").splitlines()
+                  if line.strip()]
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AttemptRecordError("invalid_telemetry", "attempt record telemetry is not JSONL") from exc
+    if not events:
+        raise AttemptRecordError("invalid_telemetry", "attempt record telemetry is empty")
+    for event in events:
+        if not isinstance(event, dict) or persisted_event_diagnostics(event):
+            raise AttemptRecordError("invalid_telemetry", "attempt record telemetry fails schema")
+        execution = event.get("execution")
+        if not isinstance(execution, dict) or execution.get("provider") != "github_actions" \
+                or (int(execution["run_id"]), int(execution["run_attempt"])) != (run_id, attempt):
+            raise AttemptRecordError("identity_mismatch", "telemetry execution differs from record")
+        if repo_identity(event["repository"]) != repo_identity(repository) \
+                or event["head_sha"] != head_sha or event["pr_number"] not in prs:
+            raise AttemptRecordError("identity_mismatch", "telemetry subject differs from the run")
+    for name in ("decision.json", "run-binding.json"):
+        if name not in files:
+            continue
+        try:
+            doc = json.loads(files[name].decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise AttemptRecordError("malformed", f"attempt record {name} is not JSON") from exc
+        if not isinstance(doc, dict):
+            raise AttemptRecordError("malformed", f"attempt record {name} is not an object")
+        if name == "decision.json":
+            ok = (isinstance(doc.get("repository"), str)
+                  and repo_identity(doc["repository"]) == repo_identity(repository)
+                  and doc.get("pr_number") in prs and doc.get("head_sha") == head_sha)
+        else:
+            ok = (isinstance(doc.get("caller_repo"), str)
+                  and repo_identity(doc["caller_repo"]) == repo_identity(repository)
+                  and doc.get("head_sha") == head_sha and doc.get("run_id") == str(run_id)
+                  and doc.get("run_attempt") == str(attempt)
+                  and doc.get("pr_number") in {str(p) for p in prs})
+        if not ok:
+            raise AttemptRecordError("identity_mismatch", f"attempt record {name} names another run")
+    return files
+
+
+def _recover_attempts(client: GitHubClient, repository: str, run: dict[str, Any],
+                      attempts: list[int], prs: set[int], root: Path,
+                      writes: list[tuple[Path, Path, bytes]], index: int) -> list[dict[str, Any]]:
+    """Attempt records for `attempts` (S6 F-2), one manifest entry per
+    attempt that has at least one candidate check run. Accepted only when
+    every verified copy is byte-identical; differing verified copies reject
+    them all (conflicting_records). An attempt with no candidate gets no
+    entry: aggregation then reports it as run_without_telemetry."""
+    run_id = int(run["id"])
+    head_sha = run.get("head_sha")
+    if not isinstance(head_sha, str) or not _SHA_RE.match(head_sha):
+        return []
+    check_runs = _complete_listing(
+        client, f"/repos/{repository}/commits/{head_sha}/check-runs", "check_runs", "check run",
+        index, params={"check_name": ATTEMPT_RECORD_CHECK_NAME, "filter": "all"})
+    by_attempt: dict[int, list[dict[str, Any]]] = {}
+    for check_run in check_runs:
+        if check_run.get("name") != ATTEMPT_RECORD_CHECK_NAME:
+            continue
+        match = EXTERNAL_ID_RE.match(str(check_run.get("external_id") or ""))
+        if not match or int(match.group(1)) != run_id or int(match.group(2)) not in attempts:
+            continue
+        by_attempt.setdefault(int(match.group(2)), []).append(check_run)
+    owner, name = repository.split("/")
+    out: list[dict[str, Any]] = []
+    for attempt in sorted(by_attempt):
+        verified: list[tuple[int, dict[str, bytes]]] = []
+        rejected: list[dict[str, Any]] = []
+        for check_run in sorted(by_attempt[attempt], key=lambda c: int(c["id"])):
+            try:
+                files = _verify_attempt_record(check_run, repository, run_id, attempt, head_sha, prs)
+            except AttemptRecordError as exc:
+                rejected.append({"check_run_id": int(check_run["id"]), "reason": exc.reason})
+                continue
+            verified.append((int(check_run["id"]), files))
+        entry: dict[str, Any] = {
+            "attempt": attempt, "provenance": "check_run",
+            "external_id": f"faraday-review-attempt:{run_id}:{attempt}",
+            "status": "rejected", "accepted_check_run_ids": [], "rejected": rejected, "files": []}
+        if len({canonical_bytes({k: v.hex() for k, v in f.items()}) for _, f in verified}) > 1:
+            entry["rejected"] = sorted(
+                rejected + [{"check_run_id": cid, "reason": "conflicting_records"}
+                            for cid, _ in verified], key=lambda r: r["check_run_id"])
+        elif verified:
+            files = verified[0][1]
+            directory = root / owner / name / str(run_id) / f"attempt-record-a{attempt}"
+            for member in sorted(files):
+                path = directory / member
+                data = files[member]
+                _check_destination(path, root)
+                if path.exists() and path.read_bytes() != data:
+                    raise CollectionError(f"{path} exists with different bytes; never overwritten")
+                writes.append((root, path, data))
+                entry["files"].append({"name": member, "path": path.relative_to(root).as_posix(),
+                                       "sha256": _sha256(data), "size": len(data)})
+            entry["status"] = "accepted"
+            entry["accepted_check_run_ids"] = [cid for cid, _ in verified]
+        out.append(entry)
+    return out
 
 
 def _created_on_or_after(run: dict[str, Any], cutoff: date, index: int) -> bool:
@@ -401,14 +559,30 @@ def _collect_repo(client: GitHubClient, entry: dict[str, Any], visibility: str, 
             record = _plan_artifact(client, repository, int(run["id"]), artifact, root, writes)
             if record is not None:
                 records.append(record)
-        out_runs.append({
+        run_attempt = int(run.get("run_attempt") or 1)
+        out_run = {
             "run_id": int(run["id"]),
-            "run_attempt": int(run.get("run_attempt") or 1),
+            "run_attempt": run_attempt,
             "status": str(run.get("status")),
             "conclusion": run.get("conclusion"),
             "created_at": run["created_at"],
             "artifacts": records,
-        })
+        }
+        # S6 F-2: attempts whose artifact telemetry is gone (deleted on
+        # re-run, or expired) are recovered from their attempt record.
+        have = {r["attempt"] for r in records
+                if any(f["name"] == TELEMETRY_FILE for f in r["files"])}
+        lost = [a for a in range(1, run_attempt + 1)
+                if a not in have and not _archived_attempt(root, repository, int(run["id"]), a)]
+        if lost:
+            prs = {r["pr_number"] for r in records}
+            prs |= {int(p["number"]) for p in run.get("pull_requests") or []
+                    if isinstance(p, dict) and isinstance(p.get("number"), int)}
+            attempt_records = _recover_attempts(client, repository, run, lost, prs, root, writes,
+                                                index)
+            if attempt_records:
+                out_run["attempt_records"] = attempt_records
+        out_runs.append(out_run)
     return {"repository": repository, "visibility": visibility, "workflow": entry["workflow"],
             "runs": out_runs}
 

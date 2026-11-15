@@ -95,6 +95,28 @@ The repository is public, so callers in any organization can use it.
   `run-binding.json` are uploaded as artifact
   `faraday-review-pr<N>-<head sha>-a<attempt>`, retained 90 days, for the
   qualification ledger.
+- Required checks are evaluated only once final (S6 F-1). The job starts on
+  the same event as the caller's required checks, so `shadow-run` polls
+  them (10 s doubling to 60 s): a failure ends the wait at once; a context
+  with no run after `required_checks_missing_grace` (default 300 s, max
+  900 s) is `required_check_missing`; a context still running at
+  `required_checks_pending_timeout` (default 900 s, max 1800 s) ends the run
+  **failed** (`required_checks_pending_timeout`): one failed telemetry
+  record, no decision, never a Block. A head that moves while waiting makes
+  the run stale; a poll that would starve the rest of the run's API budget
+  fails as `github_api_budget_exceeded`. The job timeout (40 min) covers
+  the longest permitted wait.
+- Every attempt (completed, failed or cancelled) also publishes one neutral
+  `faraday-review / attempt-record` check run on the head, `external_id`
+  `faraday-review-attempt:<run id>:<attempt>`, carrying that attempt's
+  `telemetry.jsonl`, `decision.json` and `run-binding.json` verbatim with
+  their sha256 (S6 F-2). GitHub deletes earlier-attempt artifacts on re-run;
+  check runs survive. `collect` reads a record back only for an attempt
+  whose artifact telemetry is gone, verifies it (GitHub Actions app, head,
+  run id and attempt, repository, PR, schema, every sha256) and archives it
+  under `<run id>/attempt-record-a<attempt>/` with provenance in the
+  manifest; a record that fails any check is listed as rejected and
+  aggregation reports `attempt_record_rejected`. Fork PRs skip it.
 
 ## Shadow pilot constraints (Phase 1.14)
 
