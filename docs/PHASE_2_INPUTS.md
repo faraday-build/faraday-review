@@ -355,8 +355,8 @@ gate_v5.met = verified_qualifying_real_pr_count >= threshold      (threshold >= 
   v4 is unaffected).
 - The reference layers come from permanent GitHub data, so every real PR since enrollment is
   evaluated retroactively.
-- ea #28 is concordant (red vs A3), and counts once its first window of 5 is full and sampled
-  or unsampled.
+- ea #28 is concordant (red vs A3). It counts once its first window of 5 is full, and, if it
+  is sampled, once the founder has answered at its head.
 
 Rollback: unset `FARADAY_REVIEW_MONITOR_ENABLED`, or re-pin the caller.
 
