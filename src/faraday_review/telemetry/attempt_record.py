@@ -118,9 +118,13 @@ def parse_record_text(text: Any) -> dict[str, Any]:
         raise AttemptRecordError("malformed", "attempt record block is not one fenced JSON line")
     try:
         envelope = json.loads(lines[1])
-    except json.JSONDecodeError as exc:
-        raise AttemptRecordError("malformed", "attempt record is not JSON") from exc
-    if not isinstance(envelope, dict) or _canonical_line(envelope) != lines[1]:
+        # json.loads accepts NaN/Infinity and escaped lone surrogates, which
+        # canonicalization refuses (ValueError / UnicodeEncodeError): those
+        # are malformed records, never a collection abort (Codex P2, #14).
+        canonical = isinstance(envelope, dict) and _canonical_line(envelope) == lines[1]
+    except (ValueError, UnicodeError) as exc:
+        raise AttemptRecordError("malformed", "attempt record is not canonical JSON") from exc
+    if not canonical:
         raise AttemptRecordError("malformed", "attempt record is not canonical JSON")
     if set(envelope) != {"format", "run_id", "run_attempt", "files"} \
             or envelope["format"] != RECORD_FORMAT:
@@ -138,7 +142,10 @@ def parse_record_text(text: Any) -> dict[str, Any]:
         name = entry["name"]
         if name not in RECORD_FILES or name in files or not isinstance(entry["content"], str):
             raise AttemptRecordError("malformed", "attempt record file name is unknown or repeated")
-        raw = entry["content"].encode("utf-8")
+        try:
+            raw = entry["content"].encode("utf-8")
+        except UnicodeError as exc:
+            raise AttemptRecordError("malformed", f"attempt record {name} is not UTF-8") from exc
         if entry["sha256"] != _sha256(raw) or entry["size"] != len(raw):
             raise AttemptRecordError("sha256_mismatch",
                                      f"attempt record {name}: sha256/size does not match content")

@@ -498,6 +498,11 @@ def _recover_attempts(client: GitHubClient, repository: str, run: dict[str, Any]
             except AttemptRecordError as exc:
                 rejected.append({"check_run_id": int(check_run["id"]), "reason": exc.reason})
                 continue
+            except (ValueError, TypeError, KeyError, UnicodeError):
+                # Any other surprise in an untrusted record rejects that copy
+                # only; it never aborts the collection (Codex P2, #14).
+                rejected.append({"check_run_id": int(check_run["id"]), "reason": "malformed"})
+                continue
             verified.append((int(check_run["id"]), files))
         entry: dict[str, Any] = {
             "attempt": attempt, "provenance": "check_run",

@@ -120,6 +120,25 @@ def test_tampered_text_is_rejected(mutate, reason):
     assert exc.value.reason == reason
 
 
+def _raw_block(line: str) -> str:
+    return "\n".join(["x", ar.BEGIN_MARKER, "```json", line, "```", ar.END_MARKER, ""])
+
+
+# Codex P2 (#14): json.loads accepts these, canonicalization does not.
+UNCANONICALIZABLE = [
+    '{"files":[],"format":NaN,"run_attempt":1,"run_id":1}',
+    '{"files":[{"content":"\\ud800","name":"telemetry.jsonl","sha256":"x","size":1}],'
+    '"format":"faraday-review/attempt-record/v1","run_attempt":1,"run_id":1}',
+]
+
+
+@pytest.mark.parametrize("line", UNCANONICALIZABLE)
+def test_uncanonicalizable_envelope_is_malformed(line):
+    with pytest.raises(ar.AttemptRecordError) as exc:
+        ar.parse_record_text(_raw_block(line))
+    assert exc.value.reason == "malformed"
+
+
 # ------------------------------------------------------------ publication
 
 
@@ -314,6 +333,18 @@ def test_tampered_or_foreign_record_is_an_anomaly_never_accepted(monkeypatch, tm
     assert (rej["run_attempt"], rej["check_run_id"], rej["reason"]) == (1, 80, reason)
     assert "run_without_telemetry" in _kinds(ledger)
     assert ledger["counts"]["events_read"] == 1
+
+
+@pytest.mark.parametrize("line", UNCANONICALIZABLE)
+def test_uncanonicalizable_copy_never_aborts_collection(monkeypatch, tmp_path, repo_root, line):
+    _enroll(repo_root, {"repository": PUB, "visibility": "public", "workflow": WF})
+    a1 = _attempt_files(tmp_path, 1)
+    api, _, _ = _rerun_api(tmp_path, [_check_run(85, 1, text=_raw_block(line)),
+                                      _check_run(90, 1, a1)])
+    assert _collect(monkeypatch, api, repo_root)[0] == 0
+    (entry,) = _run_entry(_manifest(_archive(repo_root)))["attempt_records"]
+    assert entry["status"] == "accepted" and entry["accepted_check_run_ids"] == [90]
+    assert entry["rejected"] == [{"check_run_id": 85, "reason": "malformed"}]
 
 
 def test_conflicting_valid_records_are_all_rejected(monkeypatch, tmp_path, repo_root):
