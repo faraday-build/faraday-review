@@ -9,7 +9,12 @@
   nothing in Phase 1.
 - **GitHub** enforces required checks and rulesets.
 - **Founder** adjudicates every escalation and any decision they choose,
-  via labels; matched on `node_id` `U_kgDODk3msA`.
+  via labels; matched on `node_id` `U_kgDODk3msA`. **Proposed (QA-1, not
+  adopted, see PHASE_2_INPUTS.md):**
+  - the founder answers only material disagreements, Block outcomes and
+    deterministic samples listed in the monitor's founder queue;
+  - mandatory escalations reach the founder through the PR's own tier;
+  - independent reference evidence covers every other qualifying PR.
 
 ## The founder loop
 

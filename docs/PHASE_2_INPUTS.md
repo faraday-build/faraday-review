@@ -269,6 +269,97 @@ release digest (drift is reported in `drift.policy_bundle_digests`).
 Since v4, `agreement`, `escalation` and `founder_latency` cover the gate
 population (O1, above).
 
+## Proposed gate criterion v5: QA-1 (NOT ADOPTED; v4 above stays authoritative)
+
+> **Status: approved in principle by the founder on 2026-11-15**
+> (GHO-AUTONOMOUS-PRODUCTION-011, QA-1 conditional approval, refinements 1–10).
+> **Not adopted.** The v4 criterion above remains the gate of record until the founder
+> formally adopts QA-1 and its tests pass. Until then the v5 report is computed alongside
+> v4, labelled `status: proposed`, `authoritative: false`, and changes nothing in v4.
+> Qualification evidence never authorizes a merge (HR-1).
+
+**Why.** v4 makes the founder the ground truth for every sample: each of the 20 PRs needs a
+founder label. That is a per-PR human bottleneck. Under QA-1, independent automated
+evidence replaces that per-PR oracle. The founder becomes an auditor of exceptions and
+deterministic samples.
+
+**Unchanged:**
+- the 20-real-PR floor (raise-only);
+- synthetic exclusion;
+- v4 eligibility of a qualifying PR;
+- exact-head binding;
+- the complete ledger and archive;
+- the kill switches and rollback.
+
+**Reference evidence** (`faraday-review reference`, read-only, re-derived from GitHub at the
+exact head; nothing caller-generated):
+
+| Layer | Evidence | Unknown when |
+|---|---|---|
+| L1 | Path tier: the PR file list evaluated by the ADR-0014 reference path tiers (vendored, sha256-pinned, proposed), raised to the enrollment `repository_floor` | the file list is incomplete or empty, the head moved, or there is no floor |
+| L2 | Codex receipt and findings from the Codex App account, bound to the exact head commit | no receipt for the head |
+| L3 | Latest required check runs (classic protection and rulesets; app id and head matched) | no required checks |
+| L4 | Reverts within 14 days of merge: **additional evidence only**; unmerged and rejected PRs keep their pre-merge evidence | (window still open: `pending`) |
+
+**Verification** (`faraday-review qualification-v5`, pure). A qualifying real PR is
+**verified** at its exact head when its reference is known and either:
+- the reference agrees with the Faraday classification, or
+- the founder answered its exception or sample at that head.
+
+Rules:
+- An unknown reference never counts.
+- Over-escalation (Faraday red vs reference A0/A1) is safe and needs no founder action.
+
+Founder review is required only for:
+- material disagreements:
+  - **X1**: green at A2+, yellow at A3+, or failing required checks;
+  - **X2**: Codex P0/P1 on green or yellow;
+  - **X3**: a post-merge revert after green or yellow;
+- **X4**: every Block;
+- deterministic samples.
+
+Mandatory escalations go to founder review through the PR's own tier (A2+). They do not need
+an extra label.
+
+**Deterministic sampling.**
+- Qualifying PRs with a known reference are taken in arrival order, in windows of 5.
+- Each full window samples its lowest-ranked **green** PR plus the lowest-ranked other PR.
+- Rank = sha256 over GitHub-assigned identifiers (first head SHA, first Codex receipt id).
+  It is reproducible by anyone, never operator-chosen, and not re-rolled by reruns or later
+  pushes.
+- A PR in a window that is not yet full does not count yet.
+
+**Founder answers.**
+- An answer is the founder's (`node_id`) single `faraday/founder-<class>` label, applied while
+  that exact head was current. Labels carried over from an earlier head are ignored.
+- Labels are read from the PR timeline. No workflow records them, and labels on PRs outside
+  the queue are never required.
+- Automated verdicts are never recorded as founder adjudications.
+
+```
+gate_v5.met = verified_qualifying_real_pr_count >= threshold      (threshold >= 20)
+          AND escalation_condition == pass   (0 missed, non-zero denominator, 0 unknown)
+          AND sampling == pass               (every full window's samples answered; 0 material sampled disagreements)
+          AND exceptions_open == 0
+          AND confirmed_material_disagreements == 0
+          AND verified_green >= 5            (green-path coverage)
+```
+
+**After activation** (ADR-0014, separately gated):
+- Delegated A0/A1 merges keep a post-merge audit floor of at least 10%, or stricter where
+  policy requires.
+- E1–E10 are re-derived live at merge time.
+
+**Migration:**
+- The monitor computes v5 next to v4 (non-blocking; on failure v5 is reported unavailable and
+  v4 is unaffected).
+- The reference layers come from permanent GitHub data, so every real PR since enrollment is
+  evaluated retroactively.
+- ea #28 is concordant (red vs A3). It counts once its first window of 5 is full, and, if it
+  is sampled, once the founder has answered at its head.
+
+Rollback: unset `FARADAY_REVIEW_MONITOR_ENABLED`, or re-pin the caller.
+
 ## Miss patterns (deterministic classification vs founder adjudication)
 
 _None recorded yet._
