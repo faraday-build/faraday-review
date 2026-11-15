@@ -1,10 +1,10 @@
 """QA-1 L1 independent reference path tier (pure; no network, no clock).
 
-The rules are not this repository's: they are `reference_path_tiers`,
-`a0_path_set` and `a0_path_exclusions` of the ADR-0014 tier policy in
-tomrivera-ops/agent-contracts, vendored byte-for-byte under
-`reference_policy/` and pinned by sha256 in `reference_policy/VENDORED.json`
-(proposed; PR #15). The vendored conformance vectors must all pass
+The rules are not this repository's: they are the ADR-0014 reference path
+tiers (proposed), vendored byte-for-byte from the contracts repository as a
+self-contained file that carries path patterns only, under
+`reference_policy/`, pinned by sha256 in `reference_policy/VENDORED.json`.
+The vendored conformance vectors must all pass
 (tests/unit/test_reference_tier.py), so this evaluator and the policy's own
 checker (agent-contracts tests/adr-0014-policy-check.py) agree.
 
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 POLICY_DIR = Path(__file__).resolve().parent / "reference_policy"
-POLICY_FILE = "tier-policy.json"
+POLICY_FILE = "reference-path-tiers.json"
 VECTORS_FILE = "reference-tier-vectors.json"
 TIER_ORDER = ("A0", "A1", "A2", "A3", "A4")
 FLOORS = ("A0", "A3")
@@ -66,13 +66,12 @@ def load_policy() -> dict[str, Any]:
         for name, digest in pin["files"].items():
             if _sha256(POLICY_DIR / name) != digest:
                 raise ReferencePolicyError(f"vendored {name} does not match its pin")
-        policy = json.loads((POLICY_DIR / POLICY_FILE).read_text(encoding="utf-8"))
-        ref = policy["reference_path_tiers"]
+        ref = json.loads((POLICY_DIR / POLICY_FILE).read_text(encoding="utf-8"))
         rules = {
             "a3": [_glob_re(g) for g in ref["a3_paths"]],
             "a1": [_glob_re(g) for g in ref["a1_paths"]],
-            "a0_in": [_glob_re(g) for g in policy["a0_path_set"]],
-            "a0_out": [_glob_re(g) for g in policy["a0_path_exclusions"]],
+            "a0_in": [_glob_re(g) for g in ref["a0_path_set"]],
+            "a0_out": [_glob_re(g) for g in ref["a0_path_exclusions"]],
             "default": ref["default"],
         }
     except (OSError, KeyError, TypeError, ValueError) as exc:
@@ -81,9 +80,12 @@ def load_policy() -> dict[str, Any]:
         raise ReferencePolicyError(f"vendored reference policy unreadable: {exc}") from exc
     if rules["default"] not in TIER_ORDER or rules["default"] in ("A0", "A1"):
         raise ReferencePolicyError("reference default tier must be A2 or higher")
+    # Provenance in outputs names the vendored file only (content digest),
+    # never the source repository or commit: outputs may be published by
+    # public callers, and the source repository is private.
     return {"rules": rules,
-            "provenance": {"source": pin["source"], "source_commit": pin["source_commit"],
-                           "sha256": pin["files"][POLICY_FILE], "status": pin.get("status")}}
+            "provenance": {"name": str(ref.get("policy")), "sha256": pin["files"][POLICY_FILE],
+                           "status": ref.get("status")}}
 
 
 def path_tier(path: str) -> str:

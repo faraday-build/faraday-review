@@ -285,3 +285,10 @@ def test_api_error_writes_nothing(monkeypatch, tmp_path):
 def test_empty_file_list_is_incomplete(monkeypatch, tmp_path):
     pt = only(run(monkeypatch, tmp_path, Api(files=()))[1])["path_tier"]
     assert pt["status"] == "incomplete" and pt["tier"] == "unknown"
+
+
+def test_output_names_only_the_caller_repository(monkeypatch, tmp_path):
+    from faraday_review.github.collection import public_identity_violations
+    _, doc, _ = run(monkeypatch, tmp_path, Api())
+    assert public_identity_violations(doc, [{"repository": REPO, "visibility": "public"}]) == 0
+    assert "agent-contracts" not in json.dumps(doc)
