@@ -585,10 +585,26 @@ def test_private_metadata_never_lands_in_public_archive(monkeypatch, tmp_path, r
     assert {e["repository"] for e in priv_ledger["entries"]} == {PRIV.casefold()}
 
 
+# Every committed enrollment is pinned here, so enrolling or removing a
+# repository is a reviewed change to this test as well as to the file (E1,
+# founder-authorized after S6 GO, 2026-11-15).
+REVIEWED_ENROLLMENT = [
+    {"repository": "tomrivera-ops/ecosystem-audit", "visibility": "public",
+     "workflow": ".github/workflows/faraday-review.yml", "enrolled_from": "2026-11-15"},
+]
+
+
 def test_committed_enrollment_is_valid_and_lists_no_private_repo():
     data = json.loads((ROOT / "docs" / "qualification" / "enrollment.json").read_text())
     assert local_validation_errors("qualification-enrollment", data) == []
     assert all(e["visibility"] == "public" for e in data)
+
+
+def test_committed_enrollment_is_exactly_the_reviewed_entries():
+    data = json.loads((ROOT / "docs" / "qualification" / "enrollment.json").read_text())
+    key = lambda e: e["repository"].lower()  # noqa: E731
+    assert len({key(e) for e in data}) == len(data), "duplicate (case-insensitive) enrollment"
+    assert sorted(data, key=key) == sorted(REVIEWED_ENROLLMENT, key=key)
 
 
 # ------------------------------------------------------------ v0.3 / v0.4 compatibility (item 6)
