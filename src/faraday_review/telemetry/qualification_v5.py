@@ -36,7 +36,7 @@ from ..canonical import canonical_bytes
 from .qualification import (
     GATE_THRESHOLD_FLOOR,
     QualificationError,
-    _occurrence_exclusions,
+    FACTS_VERSION,
     _sort_key_ts,
     persisted_local_diagnostics,
     repo_identity,
@@ -65,119 +65,21 @@ def _key(repository: str, pr: int) -> tuple[str, int]:
     return (repo_identity(repository), int(pr))
 
 
-def _latest_qualifying(ledger: dict[str, Any], repository: str, pr: int, head: str,
-                       released: list[str] | None) -> tuple[str | None, bool | None]:
-    """Classification and recorded escalation, taken together from the
-    latest *qualifying* occurrence of the current-head entry:
-    identity-eligible, completed, fresh and free of every v4 qualification
-    exclusion (policy digest, blocking-reason category), exactly as
-    readiness judges it (Codex P2, #19). Both values come from the same
-    occurrence, so a newer non-qualifying run cannot lend its class to an
-    older qualifying one (Codex P2 r2, #19). (None, None) if no qualifying
-    occurrence exists; escalation is None if not recorded as a boolean."""
-    best = None
-    for entry in ledger["entries"]:
-        if _key(entry["repository"], entry["pr_number"]) != _key(repository, pr) or \
-                entry["head_sha"] != head or not entry.get("current"):
-            continue
-        for run in entry["runs"]:
-            for occ in run["occurrence_log"]:
-                if (occ.get("eligible") and occ.get("final_status") == "completed"
-                        and occ.get("stale_state") == "fresh"
-                        and occ.get("classifier_class") in CLASS_ORDER
-                        and not _occurrence_exclusions(occ, run.get("policy_digest_verified", False),
-                                                       run.get("policy_bundle_digest"), released)):
-                    # Chronological, not lexical: accepted timestamps may carry
-                    # different UTC offsets (Codex P2, #23).
-                    rank = (_sort_key_ts(occ.get("created_at")), str(occ.get("event_key")))
-                    if best is None or rank > best[0]:
-                        best = (rank, occ.get("classifier_class"), occ.get("escalated"))
-    if best is None:
-        return None, None
-    return best[1], best[2] if isinstance(best[2], bool) else None
-
-
-def _selection_class(ledger: dict[str, Any], repository: str, pr: int,
-                     first_head: str) -> str | None:
-    """The class used to select samples: that of the EARLIEST eligible,
-    completed, fresh occurrence on the PR's first head (else on any of its
-    heads). Only facts recorded once per occurrence are used. Policy-digest
-    qualification is deliberately NOT consulted: a later release can change
-    which occurrences qualify, and that must not change which members of a
-    closed window were sampled (Codex P2 #23; r50d stability correction).
-    None if the PR has no such occurrence."""
-    best = None
-    for entry in ledger["entries"]:
-        if _key(entry["repository"], entry["pr_number"]) != _key(repository, pr):
-            continue
-        on_first = entry["head_sha"] == first_head
-        for run in entry["runs"]:
-            for occ in run["occurrence_log"]:
-                if (occ.get("eligible") and occ.get("final_status") == "completed"
-                        and occ.get("stale_state") == "fresh"
-                        and occ.get("classifier_class") in CLASS_ORDER):
-                    rank = (0 if on_first else 1, _sort_key_ts(occ.get("created_at")), str(occ.get("event_key")))
-                    if best is None or rank < best[0]:
-                        best = (rank, occ["classifier_class"])
-    return best[1] if best else None
-
-
-def _arrival(ledger: dict[str, Any], repository: str, pr: int) -> str:
-    """When the PR first became countable: its earliest COMPLETED occurrence in
-    the ledger, a recorded, never-rewritten fact. Arrival therefore does not
-    depend on live reference evidence (r50d), and a PR whose early runs all
-    failed arrives when it first completes, after windows that closed in the
-    meantime, instead of being inserted ahead of them (Codex P2 #23)."""
-    times = [_sort_key_ts(occ.get("created_at")) for entry in ledger["entries"]
-             if _key(entry["repository"], entry["pr_number"]) == _key(repository, pr)
-             for run in entry["runs"] for occ in run["occurrence_log"]
-             if occ.get("created_at") and occ.get("final_status") == "completed"]
-    return min(times) if times else (0, "")
-
-
-def _ledger_points(ledger: dict[str, Any], repository: str, pr: int) -> list[tuple[str, str]]:
-    """(created_at, head_sha) of every FRESH recorded occurrence of the PR: its
-    head history as the ledger saw it while each head was current. A stale
-    rerun on an old head (stale_state other than "fresh") is not a head
-    transition and never ends the current head's tenure, the same rule
-    readiness uses to select the current head (D3-1, Codex P2 #23)."""
-    return [(str(occ["created_at"]), str(entry["head_sha"])) for entry in ledger["entries"]
-            if _key(entry["repository"], entry["pr_number"]) == _key(repository, pr)
-            for run in entry["runs"] for occ in run["occurrence_log"]
-            if occ.get("created_at") and occ.get("stale_state") == "fresh"]
-
-
-def _first_head(ledger: dict[str, Any], repository: str, pr: int) -> str | None:
-    """The PR's first head as the ledger recorded it (earliest occurrence).
-    Used when the reference entry is missing, so the seed keeps the original
-    first head instead of the current one (Codex P2, #23)."""
-    points = _ledger_points(ledger, repository, pr)
-    return min(points, key=lambda p: (_sort_key_ts(p[0]), p[1]))[1] if points else None
-
-
-def _intervals(ref: dict[str, Any], head: str,
-               points: list[tuple[str, str]] = ()) -> list[tuple[Any, Any]]:
-    """Every [start, end) interval (as chronological sort keys) during which
-    `head` was the PR head. Transitions come from PR-specific evidence: each
-    head's first shadow telemetry (reference) plus every recorded occurrence
-    (ledger), so a head that becomes current again, for example after a
-    force-push back, gets a second interval (Codex P2, #23). A check-suite
-    time may move a head's FIRST start earlier (a label applied before its
-    shadow run), but never before the previous transition; a suite time older
-    than that (a commit checked on another branch) is ignored."""
-    seen = [(str(h["first_created_at"]), h["head_sha"]) for h in ref["heads"] if h.get("first_created_at")]
-    seen += [(str(h["first_suite_at"]), h["head_sha"]) for h in ref["heads"]
-             if not h.get("first_created_at") and h.get("first_suite_at")]
-    seq = sorted(set(seen) | set(points), key=lambda p: (_sort_key_ts(p[0]), p[1]))
-    changes: list[list[Any]] = []
-    for t, sha in seq:
-        if not changes or changes[-1][1] != sha:
-            changes.append([_sort_key_ts(t), sha])
-    suites = {h["head_sha"]: h.get("first_suite_at") for h in ref["heads"]}
-    first_change = {}
+def _intervals(ref: dict[str, Any] | None, head: str,
+               transitions: list[list[str]] = ()) -> list[tuple[Any, Any]]:
+    """Every [start, end) adjudication period (chronological sort keys) during
+    which `head` was the PR head. Head history comes ONLY from the canonical
+    v4 facts (`head_transitions`: identity-eligible fresh occurrences); v5
+    never re-derives it. The one consumer rule: a reference check-suite time
+    may move a head's FIRST start earlier (a label applied before its shadow
+    run), but never before the previous transition."""
+    changes = [[_sort_key_ts(t), sha] for t, sha in transitions]
+    suites = {h["head_sha"]: h.get("first_suite_at") for h in (ref or {}).get("heads", [])}
+    seen: set[str] = set()
     for i, (_, sha) in enumerate(changes):
-        first_change.setdefault(sha, i)
-    for sha, i in first_change.items():
+        if sha in seen:
+            continue
+        seen.add(sha)
         suite = suites.get(sha)
         if suite:
             key = _sort_key_ts(suite)
@@ -188,7 +90,7 @@ def _intervals(ref: dict[str, Any], head: str,
 
 
 def founder_answer(ref: dict[str, Any], head: str, founder_node_id: str,
-                   points: list[tuple[str, str]] = ()) -> dict[str, Any]:
+                   transitions: list[list[str]] = ()) -> dict[str, Any]:
     """The founder's classification for `head` (D3-1 head-specific
     adjudication-period model).
 
@@ -203,7 +105,7 @@ def founder_answer(ref: dict[str, Any], head: str, founder_node_id: str,
        answers for this head.
     Non-founder and unknown-class events never count. A head without any
     datable tenure has no answer."""
-    intervals = _intervals(ref, head, points)
+    intervals = _intervals(ref, head, transitions)
     events = sorted(ref["founder_label_events"],
                     key=lambda ev: (_sort_key_ts(ev["created_at"]), int(ev.get("id") or 0)))
     present: dict[str, str] = {}
@@ -282,6 +184,71 @@ def _exceptions(cls: str, ref: dict[str, Any]) -> list[str]:
     return sorted(found)
 
 
+FROZEN_FORMAT = "faraday-review/qualification-v5-frozen/v1"
+
+
+def frozen_record_errors(doc: Any) -> list[str]:
+    """Structural validation of a frozen-window record (fail closed on any
+    problem): {format, repository, windows: {"<i>": {seed, members:
+    [[pr, class, escalated]] x 5, sampled: [pr, ...]}}} with indices
+    contiguous from 0, unique members, and samples drawn from members."""
+    errs: list[str] = []
+    if not isinstance(doc, dict) or doc.get("format") != FROZEN_FORMAT:
+        return ["format"]
+    if not isinstance(doc.get("repository"), str) or "/" not in doc["repository"]:
+        errs.append("repository")
+    wins = doc.get("windows")
+    if not isinstance(wins, dict):
+        return errs + ["windows"]
+    if not all(isinstance(k, str) and k.isdigit() for k in wins) or \
+            sorted(int(k) for k in wins) != list(range(len(wins))):
+        return errs + ["window indices must be contiguous from 0"]
+    seen: set[int] = set()
+    for k, rec in wins.items():
+        if not isinstance(rec, dict) or set(rec) != {"seed", "members", "sampled"}:
+            errs.append(f"window {k}: shape"); continue
+        if not (isinstance(rec["seed"], str) and len(rec["seed"]) == 64):
+            errs.append(f"window {k}: seed")
+        ms = rec["members"]
+        if not (isinstance(ms, list) and len(ms) == WINDOW and all(
+                isinstance(m, list) and len(m) == 3 and isinstance(m[0], int) and not isinstance(m[0], bool)
+                and m[1] in CLASS_ORDER and (m[2] is None or isinstance(m[2], bool)) for m in ms)):
+            errs.append(f"window {k}: members"); continue
+        prs = [m[0] for m in ms]
+        if len(set(prs)) != WINDOW or seen & set(prs):
+            errs.append(f"window {k}: repeated member")
+        seen |= set(prs)
+        sm = rec["sampled"]
+        if not (isinstance(sm, list) and 1 <= len(sm) <= 2 and len(set(sm)) == len(sm)
+                and all(x in prs for x in sm)):
+            errs.append(f"window {k}: sampled")
+    return errs
+
+
+def frozen_record(report: dict[str, Any], repository: str) -> dict[str, Any]:
+    """The frozen record of every CLOSED window of a v5 report, for the
+    status-issue marker. Members keep the class and escalation they had at
+    closure."""
+    key = repo_identity(repository)
+    out = {}
+    for w in report["windows"]:
+        if not w["closed"]:
+            continue
+        out[str(w["index"])] = {
+            "seed": w["seed"],
+            "members": [[m["pr_number"], m["faraday_class"], m["escalated"]] for m in w["members"]
+                        if repo_identity(m["repository"]) == key],
+            "sampled": [s["pr_number"] for s in w["sampled"] if repo_identity(s["repository"]) == key],
+        }
+    return {"format": FROZEN_FORMAT, "repository": repository, "windows": out}
+
+
+def window_digest(record: dict[str, Any]) -> str:
+    """16-hex digest of one frozen window record (stored next to it in the
+    marker, so a tampered or corrupted record is detected)."""
+    return _sha(record)[:16]
+
+
 def _rank(seed: str, item: dict[str, Any]) -> str:
     return hashlib.sha256(f"{seed}\n{repo_identity(item['repository'])}\n{item['pr_number']}\n"
                           f"{item['first_head_sha']}".encode()).hexdigest()
@@ -289,7 +256,15 @@ def _rank(seed: str, item: dict[str, Any]) -> str:
 
 def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], reference: dict[str, Any], *,
                      generated_at: str, founder_node_id: str, evidence: dict[str, str],
-                     threshold: int = GATE_THRESHOLD_FLOOR) -> dict[str, Any]:
+                     threshold: int = GATE_THRESHOLD_FLOOR,
+                     frozen: dict[str, dict[str, Any]] | None = None,
+                     frozen_status: str = "none") -> dict[str, Any]:
+    """`frozen`: verified closed-window records by index (from the status-issue
+    marker; see frozen_windows_from_marker). `frozen_status`: "none" (no prior
+    record, e.g. first run), "loaded", "unavailable" or "invalid". The last two
+    fail closed: sampling cannot pass."""
+    if frozen_status not in ("none", "loaded", "unavailable", "invalid"):
+        raise QualificationError("invalid frozen_status")
     if threshold < GATE_THRESHOLD_FLOOR:
         raise QualificationError(f"threshold {threshold} is below the hard floor {GATE_THRESHOLD_FLOOR}")
     errors = persisted_local_diagnostics("qualification-reference", reference)
@@ -304,46 +279,89 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
 
     items = []
     for c in readiness["counted_prs"]:
-        # Every counted real PR is a window member, qualifying or not, so a PR
-        # that later stops qualifying (an incomplete or excluded new head)
-        # never shifts window boundaries; it is only ineligible (r50d).
+        # Canonical facts come from v4 readiness (single source of truth). v5
+        # never re-derives countability, freshness, qualifying runs or head
+        # history. Readiness without them is refused (fail closed).
+        facts = c.get("facts")
+        if not isinstance(facts, dict) or facts.get("facts_version") != FACTS_VERSION:
+            raise QualificationError("readiness lacks canonical facts (facts_version 1); refusing to "
+                                     "re-derive them")
+        # Every counted real PR is a window member, qualifying or not; a PR
+        # that later stops qualifying is only ineligible (r50d).
         qualifying = c["qualification"]["status"] in QUALIFYING
         k = _key(c["repository"], c["pr_number"])
         ref = refs.get(k)
+        first = facts["first_countable"]
+        latest = facts["latest_qualifying"]
+        transitions = facts["head_transitions"]
+        contradictory = (first is None or not transitions or transitions[-1][1] != c["head_sha"]
+                         or (qualifying and latest is None))
         view = _reference_view(ref, c["head_sha"])
-        q_cls, q_escalated = _latest_qualifying(ledger, c["repository"], c["pr_number"], c["head_sha"],
-                                                readiness.get("gate", {}).get("released_policy_digests"))
-        cls = q_cls if q_cls is not None else c["classifier_class"]
-        first_head = (ref["first_head_sha"] if ref else
-                      _first_head(ledger, c["repository"], c["pr_number"]) or c["head_sha"])
+        if contradictory:
+            view = {"status": "unknown", "reason": "facts_contradictory", "reasons": ["facts_contradictory"],
+                    **{k2: v for k2, v in view.items() if k2 not in ("status", "reason", "reasons",
+                                                                       "review_required")}}
+        cls = latest["classifier_class"] if latest else c["classifier_class"]
         items.append({
             "qualifying": qualifying,
             "repository": c["repository"], "pr_number": int(c["pr_number"]), "head_sha": c["head_sha"],
             "faraday_class": cls,
-            "escalated": q_escalated,
+            "escalated": latest["escalated"] if latest else None,
             "reference": view,
-            "exceptions": _exceptions(cls, view),
-            "founder_answer": (founder_answer(ref, c["head_sha"], founder_node_id,
-                                              _ledger_points(ledger, c["repository"], c["pr_number"])) if ref
+            "founder_answer": (founder_answer(ref, c["head_sha"], founder_node_id, transitions) if ref
                                else {"status": "none", "class": None, "labeled_at": None}),
-            "first_head_sha": first_head,
-            "selection_class": _selection_class(ledger, c["repository"], c["pr_number"], first_head) or cls,
-            "_first_seen": _arrival(ledger, c["repository"], c["pr_number"]),
+            "first_head_sha": first["head_sha"] if first else c["head_sha"],
+            "selection_class": (first or {}).get("classifier_class") or cls,
+            "_first_seen": _sort_key_ts(first["created_at"]) if first else (0, ""),
         })
+    by_key = {_key(i["repository"], i["pr_number"]): i for i in items}
 
-    # Sampling over every qualifying PR in arrival order. A member whose
-    # reference is unknown stays in its window (it is ineligible for
-    # verification, not removed), so a later push or a missing receipt on one
-    # PR never shifts windows or re-rolls seeds for others (Codex P2 r2, #19).
-    candidates = sorted(items,
-                        key=lambda i: (i["_first_seen"], repo_identity(i["repository"]), i["pr_number"]))
+    # Frozen windows: a closed window's record (seed, members with their class
+    # and escalation at closure, samples) from the status-issue marker is reused
+    # verbatim and never recomputed. Classifications and mandatory escalations
+    # are preserved after closure. The records must be contiguous from window 0;
+    # anything else, or an unreadable record, fails closed (the gate cannot pass).
+    frozen_windows: dict[str, dict[str, Any]] = {}
+    frozen_repo = ""
+    frozen_ok = frozen_status in ("none", "loaded")
+    if frozen_ok and frozen is not None:
+        if frozen_record_errors(frozen):
+            frozen_ok, frozen_status = False, "invalid"
+        else:
+            frozen_windows, frozen_repo = frozen["windows"], frozen["repository"]
+    frozen = frozen_windows
     windows = []
+    departed_sampled = 0
+    in_frozen: set[tuple[str, int]] = set()
+    for w in (range(len(frozen)) if frozen_ok else []):
+        rec = frozen[str(w)]
+        repo = frozen_repo
+        members = []
+        for pr_number, cls_at, esc_at in rec["members"]:
+            key = _key(repo, pr_number)
+            in_frozen.add(key)
+            item = by_key.get(key)
+            if item is not None:
+                item["faraday_class"], item["escalated"] = cls_at, esc_at
+                item["window"], item["window_closed"] = w, True
+                item["sampled"] = pr_number in rec["sampled"]
+            elif pr_number in rec["sampled"]:
+                departed_sampled += 1   # its sample review can no longer be answered: stays pending
+            members.append({"repository": repo, "pr_number": pr_number, "faraday_class": cls_at,
+                            "escalated": esc_at, "present": item is not None})
+        windows.append({"index": w, "closed": True, "frozen": True, "seed": rec["seed"], "members": members,
+                        "sampled": [{"repository": repo, "pr_number": n} for n in rec["sampled"]]})
+
+    # New windows over every counted PR not already in a frozen window, in
+    # canonical arrival order (first countable occurrence).
+    candidates = sorted((i for i in items if _key(i["repository"], i["pr_number"]) not in in_frozen),
+                        key=lambda i: (i["_first_seen"], repo_identity(i["repository"]), i["pr_number"]))
+    base = len(windows)
     for w in range(len(candidates) // WINDOW + (1 if len(candidates) % WINDOW else 0)):
         members = candidates[w * WINDOW:(w + 1) * WINDOW]
         closed = len(members) == WINDOW
-        # The seed binds only immutable, GitHub/git-assigned identities (repository,
-        # PR number, first head SHA): a deleted or edited Codex receipt can no
-        # longer re-roll a window (Codex P2 #23, r50d).
+        # The seed binds only immutable identities (repository, PR number, first
+        # countable head SHA).
         seed = _sha([[repo_identity(m["repository"]), m["pr_number"], m["first_head_sha"]] for m in members])
         sampled = []
         if closed:
@@ -355,14 +373,17 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
             if other is not None:
                 sampled.append(other)
         for m in members:
-            m["window"] = w
+            m["window"] = base + w
             m["window_closed"] = closed
             m["sampled"] = any(m is s for s in sampled)
-        windows.append({"index": w, "closed": closed, "seed": seed,
-                        "members": [{"repository": m["repository"], "pr_number": m["pr_number"]}
-                                    for m in members],
+        windows.append({"index": base + w, "closed": closed, "frozen": False, "seed": seed,
+                        "members": [{"repository": m["repository"], "pr_number": m["pr_number"],
+                                     "faraday_class": m["faraday_class"], "escalated": m["escalated"],
+                                     "present": True} for m in members],
                         "sampled": [{"repository": s["repository"], "pr_number": s["pr_number"]}
                                     for s in sampled]})
+    for i in items:
+        i["exceptions"] = _exceptions(i["faraday_class"], i["reference"])
 
     counts = {"qualifying": sum(1 for i in items if i["qualifying"]), "not_qualifying": 0,
               "reference_unknown": 0, "exception_open": 0, "sample_pending": 0,
@@ -373,7 +394,7 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
     # Unanswered samples, counted independently of reference eligibility: a
     # sampled PR whose reference is unknown is never verified, but its
     # founder review stays outstanding (Codex P2, #23).
-    samples_outstanding = 0
+    samples_outstanding = departed_sampled
     # Likewise unanswered exceptions (an X4 Block is raised whatever the
     # reference says): they stay in the founder queue and block the gate even
     # when the reference is unknown (Codex P2, #23).
@@ -453,6 +474,7 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
     else:
         esc_status = "pass"
     sampling_status = ("fail" if sampled_disagreements else
+                       "unknown" if not frozen_ok else
                        "pending" if samples_outstanding else
                        "pass" if any(w["closed"] for w in windows) else "unknown")
     conditions = {
@@ -461,7 +483,8 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         "escalation": {"status": esc_status, **esc},
         "sampling": {"status": sampling_status, "sampled_material_disagreements": sampled_disagreements,
                      "closed_windows": sum(1 for w in windows if w["closed"]),
-                     "pending": samples_outstanding},
+                     "pending": samples_outstanding,
+                     "frozen_windows": {"status": frozen_status, "count": len(frozen) if frozen_ok else 0}},
         "exceptions_open": exceptions_outstanding,
         "confirmed_material_disagreements": len(confirmed),
         "green_coverage": {"value": counts["verified_green"], "minimum": GREEN_MINIMUM,

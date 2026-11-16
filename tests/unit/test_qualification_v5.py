@@ -35,20 +35,36 @@ class World:
                              status=status, heads=heads, head=head, events=list(events), exact=exact))
         return self
 
-    def readiness(self):
-        return {"gate": {"released_policy_digests": [DIGEST]},
-                "counted_prs": [{"repository": REPO, "pr_number": p["n"], "head_sha": p["head"],
-                                 "classifier_class": p["cls"], "qualification": {"status": p["status"]}}
-                                for p in self.prs]}
+    def readiness(self, led=None, released=None):
+        """counted_prs with canonical facts derived by the REAL v4 helper
+        (qualification.canonical_pr_facts) from `led` (default: this world's
+        ledger), so v5 tests exercise the single source of truth."""
+        from faraday_review.telemetry.qualification import canonical_pr_facts
+        led = led or self.ledger()
+        released = [DIGEST] if released is None else released
+        out = []
+        for p in self.prs:
+            entries = [e for e in led["entries"] if e["pr_number"] == p["n"]]
+            current = [(e, r) for e in entries if e.get("current") for r in e["runs"]]
+            out.append({"repository": REPO, "pr_number": p["n"], "head_sha": p["head"],
+                        "classifier_class": p["cls"], "qualification": {"status": p["status"]},
+                        "facts": canonical_pr_facts(entries, current, released)})
+        return {"gate": {"released_policy_digests": released}, "counted_prs": out}
 
     def ledger(self):
-        return {"entries": [{"repository": REPO, "pr_number": p["n"], "head_sha": p["head"], "current": True,
-                             "runs": [{"occurrence_log": [{
-                                 "eligible": True, "final_status": "completed", "stale_state": "fresh",
-                                 "classifier_class": p["cls"], "created_at": p["heads"][-1][1],
-                                 "event_key": "k", "escalated": p["escalated"], "blocking_reasons": []}],
-                                 "policy_digest_verified": True, "policy_bundle_digest": DIGEST}]}
-                            for p in self.prs]}
+        """One entry per head, as the real ledger keeps them: earlier heads are
+        non-current with the occurrence recorded while they were current."""
+        entries = []
+        for p in self.prs:
+            for sha, t in p["heads"]:
+                entries.append({"repository": REPO, "pr_number": p["n"], "head_sha": sha,
+                                "current": sha == p["head"],
+                                "runs": [{"occurrence_log": [{
+                                    "eligible": True, "final_status": "completed", "stale_state": "fresh",
+                                    "classifier_class": p["cls"], "created_at": t,
+                                    "event_key": "k", "escalated": p["escalated"], "blocking_reasons": []}],
+                                    "policy_digest_verified": True, "policy_bundle_digest": DIGEST}]})
+        return {"entries": entries}
 
     def reference(self):
         prs = []
@@ -344,7 +360,7 @@ def test_escalation_is_taken_from_a_qualifying_occurrence_only():
     led["entries"][0]["runs"].append({**run, "policy_bundle_digest": "sha256:" + "e" * 64,
                                       "occurrence_log": [{**run["occurrence_log"][0], "escalated": True,
                                                           "created_at": "2026-11-18T00:00:00Z"}]})
-    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+    r = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
                          evidence={})
     assert pr(r, 1)["escalated"] is False
 
@@ -389,7 +405,7 @@ def test_class_and_escalation_come_from_the_latest_qualifying_occurrence():
         "occurrence_log": [dict(base, classifier_class="green", created_at="2026-11-15T03:00:00Z",
                                 event_key="c", escalated=False)],
         "policy_digest_verified": True, "policy_bundle_digest": "sha256:" + "e" * 64})
-    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS,
+    r = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS,
                          founder_node_id=FOUNDER, evidence={})
     assert pr(r, 1)["faraday_class"] == "red"
     assert pr(r, 1)["escalated"] is False
@@ -399,7 +415,7 @@ def test_no_qualifying_occurrence_keeps_escalation_unknown():
     w = World().add(1, cls="red")
     led = w.ledger()
     led["entries"][0]["runs"][0]["policy_bundle_digest"] = "sha256:" + "e" * 64
-    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS,
+    r = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS,
                          founder_node_id=FOUNDER, evidence={})
     assert pr(r, 1)["escalated"] is None and pr(r, 1)["faraday_class"] == "red"
 
@@ -494,7 +510,7 @@ def test_sample_selection_survives_a_later_reclassification(target):
         w.add(n, **({"cls": "green", "tier": "A0"} if n == target else {}))
     base = w.run()
     led = _reclassified(w, target, "red")
-    readiness = w.readiness()
+    readiness = w.readiness(led)
     for c in readiness["counted_prs"]:
         if c["pr_number"] == target:
             c["classifier_class"] = "red"
@@ -526,10 +542,9 @@ def test_selection_class_does_not_change_when_a_digest_is_released_later():
                          created_at="2026-11-14T00:00:00Z", event_key="early", escalated=False)
             e["runs"].insert(0, {"occurrence_log": [first], "policy_digest_verified": True,
                                  "policy_bundle_digest": "sha256:" + "e" * 64})
-    before = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+    before = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
                               evidence={})["windows"]
-    released = w.readiness()
-    released["gate"]["released_policy_digests"].append("sha256:" + "e" * 64)
+    released = w.readiness(led, released=[DIGEST, "sha256:" + "e" * 64])
     after = qualification_v5(released, led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
                              evidence={})["windows"]
     assert [x["sampled"] for x in after] == [x["sampled"] for x in before]
@@ -605,7 +620,7 @@ def test_pr_whose_early_runs_failed_arrives_when_it_first_completes():
             e["runs"][0]["occurrence_log"] = [
                 dict(occ, final_status="failed", created_at="2026-11-15T01:00:00Z", event_key="f"),
                 dict(occ, created_at="2026-11-15T23:00:00Z", event_key="c")]
-    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    r = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
     closed_base = [x for x in base["windows"] if x["closed"]]
     assert [(x["members"], x["sampled"]) for x in r["windows"][:len(closed_base)]] == \
         [(x["members"], x["sampled"]) for x in closed_base]
@@ -622,12 +637,13 @@ def test_head_checked_earlier_on_another_branch_does_not_reverse_tenure():
                       "first_suite_at": "2026-11-14T10:00:00Z"}],
            "founder_label_events": [{"event": "labeled", "label": "faraday/founder-red", "actor_node_id": FOUNDER,
                                      "created_at": "2026-11-16T12:00:00Z", "id": 1}]}
-    assert founder_answer(ref, new, FOUNDER)["status"] == "answered"
-    assert founder_answer(ref, old, FOUNDER)["status"] == "none"
+    tr = [["2026-11-15T10:00:00Z", old], ["2026-11-16T10:00:00Z", new]]  # canonical v4 transitions
+    assert founder_answer(ref, new, FOUNDER, tr)["status"] == "answered"
+    assert founder_answer(ref, old, FOUNDER, tr)["status"] == "none"
     # A label while the old head was still current (Nov 15 12:00) binds to the old head.
     ref["founder_label_events"][0]["created_at"] = "2026-11-15T12:00:00Z"
-    assert founder_answer(ref, old, FOUNDER)["status"] == "answered"
-    assert founder_answer(ref, new, FOUNDER)["status"] == "none"
+    assert founder_answer(ref, old, FOUNDER, tr)["status"] == "answered"
+    assert founder_answer(ref, new, FOUNDER, tr)["status"] == "none"
 
 
 def test_missing_reference_keeps_the_ledger_first_head_in_the_seed():
@@ -648,10 +664,10 @@ def test_missing_reference_keeps_the_ledger_first_head_in_the_seed():
                                        event_key="first")]}]})
             break
     full_ref = w.reference()
-    base = qualification_v5(w.readiness(), led, full_ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    base = qualification_v5(w.readiness(led), led, full_ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
     ref = copy.deepcopy(full_ref)
     ref["prs"] = [p for p in ref["prs"] if p["pr_number"] != 1]
-    r = qualification_v5(w.readiness(), led, ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    r = qualification_v5(w.readiness(led), led, ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
     assert [x["seed"] for x in r["windows"]] == [x["seed"] for x in base["windows"]]
     assert _samples(r) == _samples(base)
 
@@ -665,7 +681,7 @@ def test_head_that_becomes_current_again_accepts_a_later_label():
                      {"head_sha": b, "first_created_at": "2026-11-16T10:00:00Z", "first_suite_at": None}],
            "founder_label_events": [{"event": "labeled", "label": "faraday/founder-red", "actor_node_id": FOUNDER,
                                      "created_at": "2026-11-17T12:00:00Z", "id": 1}]}
-    points = [("2026-11-15T10:00:00Z", a), ("2026-11-16T10:00:00Z", b), ("2026-11-17T10:00:00Z", a)]
+    points = [["2026-11-15T10:00:00Z", a], ["2026-11-16T10:00:00Z", b], ["2026-11-17T10:00:00Z", a]]
     assert founder_answer(ref, a, FOUNDER, points)["status"] == "answered"
     assert founder_answer(ref, b, FOUNDER, points)["status"] == "none"
     # Without the return, the label is outside A's tenure.
@@ -681,7 +697,7 @@ def test_occurrence_timestamps_are_compared_chronologically():
     led["entries"][0]["runs"][0]["occurrence_log"] = [
         dict(occ, classifier_class="red", created_at="2026-11-15T01:00:00+02:00", event_key="a", escalated=True),
         dict(occ, classifier_class="green", created_at="2026-11-14T23:30:00Z", event_key="b", escalated=False)]
-    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    r = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
     assert pr(r, 1)["faraday_class"] == "green" and pr(r, 1)["escalated"] is False
 
 
@@ -707,7 +723,7 @@ def test_stale_rerun_on_an_old_head_does_not_end_the_current_heads_tenure():
                                dict(occ, created_at="2026-11-17T00:00:00Z", event_key="a-rerun",
                                     stale_state="stale_before_publication")],
                                "policy_digest_verified": True, "policy_bundle_digest": DIGEST}]})
-    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    r = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
     assert pr(r, 1)["founder_answer"] == {"status": "answered", "class": "red", "labeled_at": "2026-11-17T12:00:00Z"}
 
 
@@ -720,7 +736,7 @@ def test_removal_during_another_heads_tenure_is_replayed():
     ref = _ref([(a, "2026-11-15T10:00:00Z"), (b, "2026-11-16T10:00:00Z")],
                [("labeled", "red", "2026-11-15T12:00:00Z"), ("unlabeled", "red", "2026-11-16T12:00:00Z"),
                 ("labeled", "green", "2026-11-17T12:00:00Z")])
-    points = [("2026-11-15T10:00:00Z", a), ("2026-11-16T10:00:00Z", b), ("2026-11-17T10:00:00Z", a)]
+    points = [["2026-11-15T10:00:00Z", a], ["2026-11-16T10:00:00Z", b], ["2026-11-17T10:00:00Z", a]]
     assert founder_answer(ref, a, FOUNDER, points)["class"] == "green"
     assert founder_answer(ref, a, FOUNDER, points)["status"] == "answered"
     assert founder_answer(ref, b, FOUNDER, points)["status"] == "none"
@@ -733,7 +749,7 @@ def test_a_stale_label_left_from_another_head_makes_the_answer_ambiguous():
     a, b = h(1), h(1, 2)
     ref = _ref([(a, "2026-11-15T10:00:00Z"), (b, "2026-11-16T10:00:00Z")],
                [("labeled", "red", "2026-11-15T12:00:00Z"), ("labeled", "green", "2026-11-16T12:00:00Z")])
-    assert founder_answer(ref, b, FOUNDER)["status"] == "ambiguous"
+    assert founder_answer(ref, b, FOUNDER, [["2026-11-15T10:00:00Z", a], ["2026-11-16T10:00:00Z", b]])["status"] == "ambiguous"
 
 
 def test_label_history_is_replayed_chronologically_not_in_input_order():
@@ -745,7 +761,7 @@ def test_label_history_is_replayed_chronologically_not_in_input_order():
     ref = _ref([(a, "2026-11-15T10:00:00Z")],
                [("labeled", "red", "2026-11-15T23:30:00Z"), ("unlabeled", "red", "2026-11-16T01:00:00+02:00"),
                 ("labeled", "red", "2026-11-15T22:00:00Z")])
-    ans = founder_answer(ref, a, FOUNDER)
+    ans = founder_answer(ref, a, FOUNDER, [["2026-11-15T10:00:00Z", a]])
     assert ans["status"] == "answered" and ans["labeled_at"] == "2026-11-15T23:30:00Z"
 
 
@@ -753,3 +769,184 @@ def test_answer_needs_a_datable_tenure_for_the_head():
     from faraday_review.telemetry.qualification_v5 import founder_answer
     ref = _ref([], [("labeled", "red", "2026-11-15T12:00:00Z")])
     assert founder_answer(ref, h(1), FOUNDER)["status"] == "none"
+
+
+# ---- single-source-of-truth correction: v5 consumes v4 canonical facts --------------------------
+
+def test_stale_completion_does_not_backdate_arrival_end_to_end():
+    """Codex P2 4581842398: PR 1's first completion was STALE; PRs 2-11 counted
+    and their windows closed; PR 1 later completes fresh. Arrival comes from the
+    v4 fact (first countable = fresh), so closed windows are unchanged."""
+    def world(include_pr1):
+        w = World()
+        for n in range(1, 12):
+            if n == 1 and not include_pr1:
+                continue
+            w.add(n, heads=[(h(n), f"2026-11-15T{n:02d}:00:00Z")])
+        return w
+    base = world(False).run()
+    w = world(True)
+    led = w.ledger()
+    for e in led["entries"]:
+        if e["pr_number"] == 1:
+            occ = e["runs"][0]["occurrence_log"][0]
+            e["runs"][0]["occurrence_log"] = [
+                dict(occ, stale_state="stale_before_publication", created_at="2026-11-15T01:00:00Z", event_key="s"),
+                dict(occ, created_at="2026-11-15T23:00:00Z", event_key="f")]
+    r = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={})
+    closed = [x for x in base["windows"] if x["closed"]]
+    strip = lambda ws: [([m["pr_number"] for m in x["members"]], x["sampled"]) for x in ws]
+    assert strip(r["windows"][:len(closed)]) == strip(closed)
+
+
+def test_readiness_without_canonical_facts_is_refused():
+    w = _ten_red()
+    rd = w.readiness()
+    for c in rd["counted_prs"]:
+        c.pop("facts")
+    with pytest.raises(QualificationError, match="canonical facts"):
+        qualification_v5(rd, w.ledger(), w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda f: f.update(first_countable=None),
+    lambda f: f.update(head_transitions=[]),
+    lambda f: f.update(head_transitions=[["2026-11-15T01:00:00Z", "f" * 40]]),
+    lambda f: f.update(latest_qualifying=None),
+])
+def test_contradictory_facts_make_the_reference_unknown(mutate):
+    w = World().add(1)
+    rd = w.readiness()
+    mutate(rd["counted_prs"][0]["facts"])
+    r = qualification_v5(rd, w.ledger(), w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert pr(r, 1)["verification"] == "reference_unknown"
+    assert pr(r, 1)["reference"]["reason"] == "facts_contradictory"
+
+
+def test_v5_does_not_read_the_ledger_for_facts():
+    """The ledger argument is evidence binding only: an emptied ledger with the
+    same readiness facts yields the same report."""
+    w = _ten_red()
+    a = w.run()
+    b = qualification_v5(w.readiness(), {"entries": []}, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={})
+    assert a["windows"] == b["windows"] and a["prs"] == b["prs"]
+
+
+# ---- frozen windows -----------------------------------------------------------------------------
+
+def _frozen_from(report):
+    from faraday_review.telemetry.qualification_v5 import frozen_record
+    return frozen_record(report, REPO)
+
+
+def test_frozen_window_is_reused_verbatim_even_if_recomputation_differs():
+    from faraday_review.telemetry.qualification_v5 import frozen_record_errors
+    base = _ten_red().run()
+    frozen = _frozen_from(base)
+    assert frozen_record_errors(frozen) == [] and set(frozen["windows"]) == {"0", "1"}
+    # Remove PR 1 from the population (it would shift every window if recomputed).
+    w = _ten_red()
+    w.prs = [p for p in w.prs if p["n"] != 1]
+    r = qualification_v5(w.readiness(), w.ledger(), w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={}, frozen=frozen, frozen_status="loaded")
+    assert [x["seed"] for x in r["windows"][:2]] == [x["seed"] for x in base["windows"][:2]]
+    assert [x["sampled"] for x in r["windows"][:2]] == [x["sampled"] for x in base["windows"][:2]]
+    assert all(x["frozen"] for x in r["windows"][:2])
+    assert next(m for m in r["windows"][0]["members"] if m["pr_number"] == 1)["present"] is False
+
+
+def test_frozen_window_preserves_classification_and_escalation_after_closure():
+    base = _ten_red().run()
+    frozen = _frozen_from(base)
+    w = _ten_red()
+    # After closure, PR 3's later run says green / not escalated.
+    led = w.ledger()
+    for e in led["entries"]:
+        if e["pr_number"] == 3:
+            occ = e["runs"][0]["occurrence_log"][0]
+            e["runs"][0]["occurrence_log"].append(dict(occ, classifier_class="green", escalated=False,
+                                                       created_at="2026-11-19T00:00:00Z", event_key="late"))
+    r = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={}, frozen=frozen, frozen_status="loaded")
+    assert pr(r, 3)["faraday_class"] == "red" and pr(r, 3)["escalated"] is True
+    unfrozen = qualification_v5(w.readiness(led), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                                evidence={})
+    assert pr(unfrozen, 3)["faraday_class"] == "green"  # control: without the record it would change
+
+
+def test_departed_sampled_member_keeps_sampling_pending():
+    """Every other sample answered; the one sampled member that left the
+    population keeps sampling pending (it can never be answered)."""
+    w = _ten_red()
+    base = w.run()
+    answer_queue(w, base)
+    frozen = _frozen_from(w.run())
+    assert w.run()["gate"]["conditions"]["sampling"]["pending"] == 0
+    gone = frozen["windows"]["0"]["sampled"][0]
+    w.prs = [p for p in w.prs if p["n"] != gone]
+    r = qualification_v5(w.readiness(), w.ledger(), w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={}, frozen=frozen, frozen_status="loaded")
+    assert r["gate"]["conditions"]["sampling"]["pending"] == 1
+    assert r["gate"]["conditions"]["sampling"]["status"] == "pending"
+
+
+def test_new_windows_follow_the_frozen_ones():
+    w = _ten_red()
+    frozen = _frozen_from(w.run())
+    w2 = _ten_red()
+    for n in range(11, 16):
+        w2.add(n)
+    r = qualification_v5(w2.readiness(), w2.ledger(), w2.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={}, frozen=frozen, frozen_status="loaded")
+    assert [x["index"] for x in r["windows"]] == [0, 1, 2] and r["windows"][2]["frozen"] is False
+    assert [m["pr_number"] for m in r["windows"][2]["members"]] == [11, 12, 13, 14, 15]
+
+
+@pytest.mark.parametrize("status", ["unavailable", "invalid"])
+def test_unavailable_or_invalid_frozen_record_fails_closed(status):
+    w = _met_world()
+    assert w.run()["gate"]["met"] is True
+    r = qualification_v5(w.readiness(), w.ledger(), w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={}, frozen_status=status)
+    assert r["gate"]["met"] is False and r["gate"]["conditions"]["sampling"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda d: d["windows"].pop("0"),                                   # not contiguous from 0
+    lambda d: d["windows"]["0"]["members"].pop(),                      # window not full
+    lambda d: d["windows"]["0"]["sampled"].append(999),                # sample not a member
+    lambda d: d["windows"]["1"]["members"].__setitem__(0, d["windows"]["0"]["members"][0]),  # repeated member
+    lambda d: d.update(format="x"),
+    lambda d: d["windows"]["0"].update(seed="short"),
+])
+def test_malformed_frozen_record_is_invalid_and_fails_closed(mutate):
+    w = _ten_red()
+    frozen = _frozen_from(w.run())
+    mutate(frozen)
+    r = qualification_v5(w.readiness(), w.ledger(), w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                         evidence={}, frozen=frozen, frozen_status="loaded")
+    assert r["gate"]["conditions"]["sampling"]["frozen_windows"]["status"] == "invalid"
+    assert r["gate"]["conditions"]["sampling"]["status"] == "unknown" and r["gate"]["met"] is False
+
+
+def test_cli_frozen_flags(tmp_path):
+    w = _ten_red()
+    paths = {}
+    for name, doc in (("readiness", w.readiness()), ("ledger", w.ledger()), ("reference", w.reference())):
+        paths[name] = tmp_path / f"{name}.json"
+        paths[name].write_text(json.dumps(doc))
+    fz = tmp_path / "frozen.json"
+    fz.write_text(json.dumps(_frozen_from(w.run())))
+    base = ["qualification-v5", "--readiness", str(paths["readiness"]), "--ledger", str(paths["ledger"]),
+            "--reference", str(paths["reference"]), "--generated-at", TS]
+    out = tmp_path / "o.json"
+    assert cli.main(base + ["--output", str(out), "--frozen", str(fz), "--frozen-status", "loaded"]) == 0
+    assert json.loads(out.read_text())["gate"]["conditions"]["sampling"]["frozen_windows"] == {"status": "loaded",
+                                                                                               "count": 2}
+    assert cli.main(base + ["--output", str(out), "--frozen", str(fz)]) == 2            # status mismatch
+    assert cli.main(base + ["--output", str(out), "--frozen-status", "loaded"]) == 2    # missing file
+    assert cli.main(base + ["--output", str(out), "--frozen", str(tmp_path / "nope.json"),
+                            "--frozen-status", "loaded"]) == 0
+    assert json.loads(out.read_text())["gate"]["conditions"]["sampling"]["frozen_windows"]["status"] == "unavailable"

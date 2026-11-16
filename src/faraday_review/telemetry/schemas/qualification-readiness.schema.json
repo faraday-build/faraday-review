@@ -164,6 +164,28 @@
               "status": { "enum": ["adjudicated_qualifying", "unadjudicated", "unknown", "misconfigured", "refused", "infrastructure_blocked", "policy_digest_unverified"] },
               "exclusion_reasons": { "type": "array", "items": { "$ref": "#/$defs/exclusion" }, "description": "Every exclusion found on any candidate occurrence of the current head, sorted; also listed for a qualifying PR." }
             }
+          },
+          "facts": {
+            "type": "object",
+            "description": "Canonical per-PR facts (additive; never a v4 gate input). Consumers (qualification v5) use these instead of re-deriving.",
+            "additionalProperties": false,
+            "required": ["facts_version", "first_countable", "latest_qualifying", "head_transitions"],
+            "properties": {
+              "facts_version": { "const": 1 },
+              "first_countable": { "oneOf": [{ "type": "null" }, {
+                "type": "object", "additionalProperties": false,
+                "required": ["created_at", "head_sha", "classifier_class"],
+                "properties": { "created_at": { "type": "string" }, "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+                                "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] } } }] },
+              "latest_qualifying": { "oneOf": [{ "type": "null" }, {
+                "type": "object", "additionalProperties": false,
+                "required": ["created_at", "event_key", "classifier_class", "escalated"],
+                "properties": { "created_at": { "type": "string" }, "event_key": { "type": "string" },
+                                "classifier_class": { "oneOf": [{ "$ref": "#/$defs/class" }, { "type": "null" }] },
+                                "escalated": { "type": ["boolean", "null"] } } }] },
+              "head_transitions": { "type": "array", "items": { "type": "array", "minItems": 2, "maxItems": 2,
+                "prefixItems": [{ "type": "string" }, { "type": "string", "pattern": "^[0-9a-f]{40}$" }] } }
+            }
           }
         }
       }
