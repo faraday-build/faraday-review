@@ -432,3 +432,36 @@ def test_unanswered_sample_with_unknown_reference_stays_outstanding():
     assert any(q["pr_number"] == sampled and "sample" in q["reasons"] for q in r["founder_queue"])
     assert r["gate"]["conditions"]["sampling"]["status"] == "pending"
     assert r["gate"]["conditions"]["sampling"]["pending"] >= 1
+
+
+def test_unanswered_block_with_unknown_reference_stays_an_open_exception():
+    """Codex P2 (#23): an unsampled Block PR whose reference is unknown keeps
+    its X4 exception in the founder queue and blocks the gate."""
+    w = World()
+    for n in range(1, 26):
+        kw = {"cls": "green", "tier": "A0"} if n % 3 == 0 else {}
+        w.add(n, **kw)
+    base = w.run()
+    sampled = {s["pr_number"] for win in base["windows"] for s in win["sampled"]}
+    target = next(n for n in range(1, 26) if n not in sampled)
+    w2 = World()
+    for n in range(1, 26):
+        kw = {"cls": "green", "tier": "A0"} if n % 3 == 0 else {}
+        if n == target:
+            kw = {"cls": "block", "checks": "unknown"}
+        w2.add(n, **kw)
+    r = w2.run()
+    assert pr(r, target)["verification"] == "reference_unknown"
+    assert pr(r, target)["exceptions"] == ["X4"]
+    assert any(q["pr_number"] == target and "X4" in q["reasons"] for q in r["founder_queue"])
+    assert r["gate"]["conditions"]["exceptions_open"] >= 1
+    assert r["gate"]["met"] is False
+
+
+def test_unanswered_block_with_unknown_reference_blocks_an_otherwise_met_gate():
+    w = _met_world()
+    assert w.run()["gate"]["met"] is True
+    w.add(21, cls="block", tier="A3", checks="unknown")
+    r = w.run()
+    assert pr(r, 21)["verification"] == "reference_unknown"
+    assert r["gate"]["conditions"]["exceptions_open"] == 1 and r["gate"]["met"] is False

@@ -275,6 +275,10 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
     # sampled PR whose reference is unknown is never verified, but its
     # founder review stays outstanding (Codex P2, #23).
     samples_outstanding = 0
+    # Likewise unanswered exceptions (an X4 Block is raised whatever the
+    # reference says): they stay in the founder queue and block the gate even
+    # when the reference is unknown (Codex P2, #23).
+    exceptions_outstanding = 0
     esc = {"mandatory_total": 0, "missed": 0, "unknown": 0}
     out_prs = []
     for i in sorted(items, key=lambda i: (repo_identity(i["repository"]), i["pr_number"])):
@@ -302,7 +306,11 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         sample_open = bool(i.get("sampled")) and not answered
         if sample_open:
             samples_outstanding += 1
-        if status in ("exception_open", "sample_pending") or (status == "reference_unknown" and sample_open):
+        exception_open = bool(i["exceptions"]) and not answered
+        if exception_open:
+            exceptions_outstanding += 1
+        if status in ("exception_open", "sample_pending") or (
+                status == "reference_unknown" and (sample_open or exception_open)):
             founder_queue.append({"repository": i["repository"], "pr_number": i["pr_number"],
                                   "head_sha": i["head_sha"],
                                   "reasons": i["exceptions"] + (["sample"] if i.get("sampled") else []),
@@ -343,13 +351,13 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         "sampling": {"status": sampling_status, "sampled_material_disagreements": sampled_disagreements,
                      "closed_windows": sum(1 for w in windows if w["closed"]),
                      "pending": samples_outstanding},
-        "exceptions_open": counts["exception_open"],
+        "exceptions_open": exceptions_outstanding,
         "confirmed_material_disagreements": len(confirmed),
         "green_coverage": {"value": counts["verified_green"], "minimum": GREEN_MINIMUM,
                            "ok": counts["verified_green"] >= GREEN_MINIMUM},
     }
     met = (conditions["verified_count"]["ok"] and esc_status == "pass" and sampling_status == "pass"
-           and counts["exception_open"] == 0 and not confirmed and conditions["green_coverage"]["ok"])
+           and exceptions_outstanding == 0 and not confirmed and conditions["green_coverage"]["ok"])
     mandatory = [{"repository": p["repository"], "pr_number": p["pr_number"], "faraday_class": p["faraday_class"]}
                  for p in out_prs if p["truth_review_needed"]]
     return {
