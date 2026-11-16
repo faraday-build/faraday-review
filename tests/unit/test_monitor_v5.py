@@ -251,3 +251,42 @@ def test_outstanding_totals_come_from_gate_conditions(tmp_path):
     s = v5_summary(doc, None)
     assert s["exceptions_open"] == doc["gate"]["conditions"]["exceptions_open"]
     assert s["samples_pending"] == doc["gate"]["conditions"]["sampling"]["pending"]
+
+
+def test_rerolled_closed_window_is_a_founder_exception():
+    """r50d: a closed window whose recorded membership/samples changed since
+    the previous run (or vanished) raises `sampling_rerolled`, routed to the
+    founder; unchanged windows and newly closed ones do not."""
+    from faraday_review.telemetry.monitor import render_comment, rerolled_windows
+    prev = _marker([], closed_windows={"0": "a" * 16, "1": "b" * 16})
+    same = _marker([], closed_windows={"0": "a" * 16, "1": "b" * 16, "2": "c" * 16})
+    assert notification(same, prev) == [] and rerolled_windows(same, prev) == []
+    changed = _marker([], closed_windows={"0": "a" * 16, "1": "f" * 16})
+    assert notification(changed, prev) == ["sampling_rerolled"]
+    vanished = _marker([], closed_windows={"1": "b" * 16})
+    assert rerolled_windows(vanished, prev) == ["0"]
+    # No v5 this run (no closed_windows field): not a re-roll.
+    assert rerolled_windows(_marker([]), prev) == []
+    status = {"status": "ATTENTION", "marker": changed, "kill_switch": {"command": "x"},
+              "qualification": {}}
+    text = render_comment(status, prev, ["sampling_rerolled"])
+    assert "re-rolled" in text and "window 1" in text
+
+
+def test_parse_marker_validates_closed_windows():
+    body = lambda m: "x\n<!-- faraday-review-qualification-monitor: " + json.dumps(m) + " -->\n"
+    assert parse_marker(body(_marker([], closed_windows={"0": "a" * 16})), REPO) is not None
+    assert parse_marker(body(_marker([], closed_windows={"x": "a" * 16})), REPO) is None
+    assert parse_marker(body(_marker([], closed_windows={"0": "short"})), REPO) is None
+    assert parse_marker(body(_marker([], closed_windows=["0"])), REPO) is None
+
+
+def test_marker_records_closed_window_digests(tmp_path):
+    arc, built = _world(tmp_path, n=12)
+    v5 = _v5(arc, built, tier="A0")
+    _, status, _ = _monitor(arc, built, extra=("--qualification-v5", v5))
+    doc = json.loads(open(v5).read())
+    closed = [w for w in doc["windows"] if w["closed"]]
+    assert any(not w["closed"] for w in doc["windows"])  # an open window is never recorded
+    assert closed and set(status["marker"]["closed_windows"]) == {str(w["index"]) for w in closed}
+    assert all(len(v) == 16 for v in status["marker"]["closed_windows"].values())

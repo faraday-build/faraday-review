@@ -271,6 +271,8 @@ def _anomaly_counts(anomalies: list[dict[str, Any]]) -> dict[str, int]:
 
 
 MAX_QUEUE_MARKER = 500
+# Closed-window digests kept in the issue marker (the newest; ~5 PRs each).
+MAX_WINDOW_MARKER = 200
 # Founder-queue lines rendered into the issue body (65,536-character limit);
 # the full queue stays in status.json (Codex P2 r2, #20).
 MAX_RENDERED_QUEUE = 50
@@ -297,6 +299,13 @@ def v5_summary(v5: dict[str, Any] | None, unavailable: str | None) -> dict[str, 
         "met": v5["gate"]["met"],
         "founder_queue": [{"pr_number": q["pr_number"], "head_sha": q["head_sha"], "reasons": q["reasons"]}
                           for q in sorted(v5["founder_queue"], key=lambda q: q["pr_number"])],
+        # Digest of each CLOSED sampling window (membership + samples). The
+        # issue marker keeps the previous run's digests, so a later run that
+        # re-rolls a closed window is detected and routed to the founder as an
+        # exception (r50d, QA-1 refinement 6).
+        "closed_windows": {str(w["index"]): _sha256(canonical_bytes(
+            {"members": w["members"], "sampled": w["sampled"]}))[:16]
+            for w in v5["windows"] if w["closed"]},
     }
 
 
@@ -403,6 +412,9 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
         doc["marker"]["founder_queue"] = items[:MAX_QUEUE_MARKER]
         doc["marker"]["founder_queue_total"] = len(items)
         doc["marker"]["founder_queue_digest"] = _sha256(canonical_bytes(items))
+        closed = summary.get("closed_windows", {})
+        keep = sorted(closed, key=int)[-MAX_WINDOW_MARKER:]
+        doc["marker"]["closed_windows"] = {k: closed[k] for k in keep}
     return doc
 
 
@@ -647,7 +659,31 @@ def parse_marker(body: str, repository: str) -> dict[str, Any] | None:
     qd = marker.get("founder_queue_digest")
     if qd is not None and not isinstance(qd, str):
         return None
+    windows = marker.get("closed_windows", {})
+    if not isinstance(windows, dict) or not all(
+            isinstance(k, str) and k.isdigit() and isinstance(v, str) and len(v) == 16
+            for k, v in windows.items()):
+        return None
     return marker
+
+
+def rerolled_windows(current: dict[str, Any], previous: dict[str, Any] | None) -> list[str]:
+    """Closed windows recorded by the previous run whose membership or samples
+    differ now (or that vanished): sampling was re-rolled. Only windows the
+    current marker still covers by index range are compared, so marker
+    trimming is not mistaken for a re-roll."""
+    prev = (previous or {}).get("closed_windows", {})
+    cur = current.get("closed_windows", {})
+    if not prev or "closed_windows" not in current:
+        return []
+    floor = min((int(k) for k in cur), default=None)
+    out = []
+    for k in sorted(prev, key=int):
+        if floor is not None and int(k) < floor and len(cur) >= MAX_WINDOW_MARKER:
+            continue
+        if cur.get(k) != prev[k]:
+            out.append(k)
+    return out
 
 
 def notification(current: dict[str, Any], previous: dict[str, Any] | None) -> list[str]:
@@ -666,6 +702,8 @@ def notification(current: dict[str, Any], previous: dict[str, Any] | None) -> li
             current.get("founder_queue_total", 0) > MAX_QUEUE_MARKER
             and current.get("founder_queue_digest") != prev.get("founder_queue_digest")):
         reasons.append("founder_queue")
+    if rerolled_windows(current, previous):
+        reasons.append("sampling_rerolled")
     return reasons
 
 
@@ -691,6 +729,12 @@ def render_comment(status: dict[str, Any], previous: dict[str, Any] | None,
         lines.append("- QA-1 (proposed) founder queue, new: "
                      + ", ".join(f"#{q.split(':')[0]} ({q.split(':')[2]})" for q in new)
                      + ". Label each PR with exactly one `faraday/founder-<class>` at its current head.")
+    if "sampling_rerolled" in reasons:
+        changed = rerolled_windows(marker, previous)
+        lines.append("- **QA-1 (proposed) EXCEPTION: closed sampling window(s) re-rolled**: "
+                     + ", ".join(f"window {k}" for k in changed)
+                     + ". A PR left the ledger or its recorded evidence changed; compare with the "
+                       "previous status. Founder review required before relying on v5 sampling.")
     lines += ["", "The issue body holds the full status. Qualification evidence only; "
               "authorizes nothing."]
     return "\n".join(lines) + "\n"
