@@ -54,13 +54,15 @@ class Api:
         self.timeline: list = []
         self.visibility = {"visibility": "public", "private": False}
         self.statuses: list = []
+        self.commit_count = None
 
     @property
     def routes(self):
         pr = {"state": "closed" if self.merged else "open", "merged": self.merged, "draft": False,
               "head": {"sha": self.head}, "base": {"ref": "main"}, "changed_files": self.changed,
               "merged_at": "2026-11-16T00:00:00Z" if self.merged else None,
-              "merge_commit_sha": "c" * 40 if self.merged else None}
+              "merge_commit_sha": "c" * 40 if self.merged else None,
+              "commits": len(self.pr_commits) if self.commit_count is None else self.commit_count}
         b = f"/repos/{REPO}"
         return {
             b: (200, self.visibility),
@@ -373,6 +375,24 @@ def test_rerun_within_one_suite_supersedes_the_earlier_attempt(monkeypatch, tmp_
     assert rc["status"] == "success" and rc["contexts"][0]["check_run_id"] == 6
 
 
+@pytest.mark.parametrize("count,revert,status", [
+    (251, False, "incomplete"), (2, False, "incomplete"), ("absent", False, "incomplete"),
+    (251, True, "adverse"), (1, False, "clear")])
+def test_truncated_pr_commit_list_never_reports_clear(monkeypatch, tmp_path, count, revert, status):
+    """Codex P2 (#22): GitHub lists at most 250 PR commits; when the listing
+    may be incomplete the outcome is incomplete (or adverse), never clear."""
+    api = Api(merged=True)
+    api.commit_count = None if count == "absent" else count
+    if count == "absent":
+        api.commit_count = "absent"
+    if revert:
+        api.commits = [{"sha": "d" * 40, "commit": {"message": f"Revert\n\nThis reverts commit {HEAD}."}}]
+    out = only(run(monkeypatch, tmp_path, api, ts="2026-12-15T00:00:00Z")[1])["outcome"]
+    assert out["status"] == status
+    if status == "incomplete":
+        assert out["reason"] == "pr_commits_truncated" and out["reverts"] == []
+
+
 class SuiteCount(Api):
     def __init__(self, total):
         super().__init__()
@@ -456,3 +476,10 @@ def test_head_that_moves_during_collection_fails_closed(monkeypatch, tmp_path):
 def test_head_transition_evidence_is_recorded(monkeypatch, tmp_path):
     pr = only(run(monkeypatch, tmp_path, Api())[1])
     assert pr["heads"][0]["first_suite_at"] == "2026-11-15T06:19:00Z"
+
+
+def test_exactly_250_listed_commits_is_complete(monkeypatch, tmp_path):
+    api = Api(merged=True)
+    api.pr_commits = [{"sha": HEAD}] + [{"sha": f"{i:040x}"} for i in range(1, 250)]
+    out = only(run(monkeypatch, tmp_path, api, ts="2026-12-15T00:00:00Z")[1])["outcome"]
+    assert out["status"] == "clear"
