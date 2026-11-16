@@ -415,3 +415,20 @@ def test_member_turning_unknown_does_not_reroll_other_windows(field, value):
     assert strip(changed["windows"]) == strip(base["windows"])
     assert len(changed["windows"]) == 4
     assert pr(changed, 2)["verification"] == "reference_unknown"
+
+
+def test_unanswered_sample_with_unknown_reference_stays_outstanding():
+    """Codex P2 (#23): a sampled PR whose reference became unknown is not
+    verified, but its sample review stays in the founder queue and keeps
+    sampling pending, so unknown evidence cannot bypass sampling."""
+    base = full(World(), count=5).run()
+    (sampled,) = [s["pr_number"] for s in base["windows"][0]["sampled"]][:1] or [None]
+    w = World()
+    for n in range(1, 6):
+        w.add(n, **({"checks": "unknown"} if n == sampled else {}))
+    r = w.run()
+    assert [s["pr_number"] for s in r["windows"][0]["sampled"]] == [s["pr_number"] for s in base["windows"][0]["sampled"]]
+    assert pr(r, sampled)["verification"] == "reference_unknown"
+    assert any(q["pr_number"] == sampled and "sample" in q["reasons"] for q in r["founder_queue"])
+    assert r["gate"]["conditions"]["sampling"]["status"] == "pending"
+    assert r["gate"]["conditions"]["sampling"]["pending"] >= 1

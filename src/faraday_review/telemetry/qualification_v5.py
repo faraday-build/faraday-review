@@ -271,6 +271,10 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
     confirmed: list[dict[str, Any]] = []
     sampled_disagreements = 0
     founder_queue = []
+    # Unanswered samples, counted independently of reference eligibility: a
+    # sampled PR whose reference is unknown is never verified, but its
+    # founder review stays outstanding (Codex P2, #23).
+    samples_outstanding = 0
     esc = {"mandatory_total": 0, "missed": 0, "unknown": 0}
     out_prs = []
     for i in sorted(items, key=lambda i: (repo_identity(i["repository"]), i["pr_number"])):
@@ -295,7 +299,10 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         else:
             status = "verified"
         counts[status] += 1
-        if status in ("exception_open", "sample_pending"):
+        sample_open = bool(i.get("sampled")) and not answered
+        if sample_open:
+            samples_outstanding += 1
+        if status in ("exception_open", "sample_pending") or (status == "reference_unknown" and sample_open):
             founder_queue.append({"repository": i["repository"], "pr_number": i["pr_number"],
                                   "head_sha": i["head_sha"],
                                   "reasons": i["exceptions"] + (["sample"] if i.get("sampled") else []),
@@ -327,7 +334,7 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
     else:
         esc_status = "pass"
     sampling_status = ("fail" if sampled_disagreements else
-                       "pending" if counts["sample_pending"] else
+                       "pending" if samples_outstanding else
                        "pass" if any(w["closed"] for w in windows) else "unknown")
     conditions = {
         "verified_count": {"value": counts["verified"], "threshold": threshold,
@@ -335,7 +342,7 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         "escalation": {"status": esc_status, **esc},
         "sampling": {"status": sampling_status, "sampled_material_disagreements": sampled_disagreements,
                      "closed_windows": sum(1 for w in windows if w["closed"]),
-                     "pending": counts["sample_pending"]},
+                     "pending": samples_outstanding},
         "exceptions_open": counts["exception_open"],
         "confirmed_material_disagreements": len(confirmed),
         "green_coverage": {"value": counts["verified_green"], "minimum": GREEN_MINIMUM,
