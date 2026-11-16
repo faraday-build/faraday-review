@@ -127,7 +127,8 @@
             "additionalProperties": false,
             "required": ["status", "window_days", "reverts"],
             "properties": {
-              "status": { "enum": ["not_merged", "pending", "clear", "adverse"] },
+              "status": { "enum": ["not_merged", "pending", "clear", "adverse", "incomplete"] },
+              "reason": { "type": "string" },
               "window_days": { "type": "integer" },
               "merged_at": { "type": "string" },
               "window_end": { "type": "string" },

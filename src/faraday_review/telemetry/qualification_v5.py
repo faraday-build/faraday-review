@@ -94,6 +94,31 @@ def _latest_qualifying(ledger: dict[str, Any], repository: str, pr: int, head: s
     return best[1], best[2] if isinstance(best[2], bool) else None
 
 
+def _selection_class(ledger: dict[str, Any], repository: str, pr: int, first_head: str,
+                     released: list[str] | None) -> str | None:
+    """The class used to select samples: that of the EARLIEST qualifying
+    occurrence on the PR's first head (else on any of its heads). Once
+    recorded it never changes, so a later run or push that reclassifies a
+    member cannot change which members of a window are sampled (Codex P2,
+    #23). None if the PR has no qualifying occurrence."""
+    best = None
+    for entry in ledger["entries"]:
+        if _key(entry["repository"], entry["pr_number"]) != _key(repository, pr):
+            continue
+        on_first = entry["head_sha"] == first_head
+        for run in entry["runs"]:
+            for occ in run["occurrence_log"]:
+                if (occ.get("eligible") and occ.get("final_status") == "completed"
+                        and occ.get("stale_state") == "fresh"
+                        and occ.get("classifier_class") in CLASS_ORDER
+                        and not _occurrence_exclusions(occ, run.get("policy_digest_verified", False),
+                                                       run.get("policy_bundle_digest"), released)):
+                    rank = (0 if on_first else 1, str(occ.get("created_at")), str(occ.get("event_key")))
+                    if best is None or rank < best[0]:
+                        best = (rank, occ["classifier_class"])
+    return best[1] if best else None
+
+
 def _seen_at(h: dict[str, Any]) -> str | None:
     """When the head became current: GitHub's earliest check suite for the
     commit (created on push), else its first shadow-run telemetry. The suite
@@ -157,6 +182,10 @@ def _reference_view(ref: dict[str, Any] | None, head: str) -> dict[str, Any]:
         reasons.append("codex_receipt_absent")
     if ref["required_checks"]["status"] == "unknown":
         reasons.append("required_checks_unknown")
+    if ref["outcome"]["status"] == "incomplete":
+        # The post-merge evidence could not be read completely (#22): never
+        # treated as clear.
+        reasons.append("outcome_incomplete")
     view = {
         "tier": tier,
         "codex": ref["codex"]["status"],
@@ -231,6 +260,9 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
             "founder_answer": (founder_answer(ref, c["head_sha"], founder_node_id) if ref
                                else {"status": "none", "class": None, "labeled_at": None}),
             "first_head_sha": ref["first_head_sha"] if ref else c["head_sha"],
+            "selection_class": _selection_class(
+                ledger, c["repository"], c["pr_number"], ref["first_head_sha"] if ref else c["head_sha"],
+                readiness.get("gate", {}).get("released_policy_digests")) or cls,
             "first_head_receipt_id": ref["codex"]["first_head_receipt_id"] if ref else None,
             "_first_seen": first_seen or "",
         })
@@ -250,7 +282,7 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         sampled = []
         if closed:
             ranked = sorted(members, key=lambda m: _rank(seed, m))
-            green = next((m for m in ranked if m["faraday_class"] == "green"), None)
+            green = next((m for m in ranked if m["selection_class"] == "green"), None)
             if green is not None:
                 sampled.append(green)
             other = next((m for m in ranked if m not in sampled), None)

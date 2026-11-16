@@ -465,3 +465,62 @@ def test_unanswered_block_with_unknown_reference_blocks_an_otherwise_met_gate():
     r = w.run()
     assert pr(r, 21)["verification"] == "reference_unknown"
     assert r["gate"]["conditions"]["exceptions_open"] == 1 and r["gate"]["met"] is False
+
+
+def _reclassified(w, n, later_cls, later_at="2026-11-19T00:00:00Z"):
+    """Ledger where PR n's head gets a later qualifying occurrence of another class."""
+    led = w.ledger()
+    for e in led["entries"]:
+        if e["pr_number"] == n:
+            occ = dict(e["runs"][0]["occurrence_log"][0], classifier_class=later_cls,
+                       created_at=later_at, event_key="later", escalated=later_cls != "green")
+            e["runs"][0]["occurrence_log"].append(occ)
+    return led
+
+
+@pytest.mark.parametrize("target", [1, 2, 3, 4, 5])
+def test_sample_selection_survives_a_later_reclassification(target):
+    """Codex P2 (#23): samples are selected by each member's earliest
+    qualifying class, so a later run reclassifying the sampled green PR
+    cannot shrink or change the window's samples."""
+    w = World()
+    for n in range(1, 6):
+        w.add(n, **({"cls": "green", "tier": "A0"} if n == target else {}))
+    base = w.run()
+    led = _reclassified(w, target, "red")
+    readiness = w.readiness()
+    for c in readiness["counted_prs"]:
+        if c["pr_number"] == target:
+            c["classifier_class"] = "red"
+    r = qualification_v5(readiness, led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert [s["pr_number"] for s in r["windows"][0]["sampled"]] == [s["pr_number"] for s in base["windows"][0]["sampled"]]
+    assert len(r["windows"][0]["sampled"]) == 2
+    assert pr(r, target)["faraday_class"] == "red"
+    assert {q["pr_number"] for q in r["founder_queue"]} >= {s["pr_number"] for s in r["windows"][0]["sampled"]}
+
+
+def test_incomplete_outcome_is_unknown_reference():
+    w = World().add(1, outcome="incomplete")
+    r = w.run()
+    assert pr(r, 1)["verification"] == "reference_unknown"
+    assert pr(r, 1)["reference"]["reason"] == "outcome_incomplete"
+
+
+def test_selection_class_ignores_non_qualifying_occurrences():
+    """The selection class comes only from qualifying occurrences: an earlier
+    green run under an unreleased policy digest does not make a red PR the
+    window's green sample."""
+    w = World()
+    for n in range(1, 6):
+        w.add(n)
+    base = w.run()
+    led = w.ledger()
+    target = next(n for n in range(1, 6) if n not in {s["pr_number"] for s in base["windows"][0]["sampled"]})
+    for e in led["entries"]:
+        if e["pr_number"] == target:
+            first = dict(e["runs"][0]["occurrence_log"][0], classifier_class="green",
+                         created_at="2026-11-14T00:00:00Z", event_key="early", escalated=False)
+            e["runs"].insert(0, {"occurrence_log": [first], "policy_digest_verified": True,
+                                 "policy_bundle_digest": "sha256:" + "e" * 64})
+    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert [s["pr_number"] for s in r["windows"][0]["sampled"]] == [s["pr_number"] for s in base["windows"][0]["sampled"]]
