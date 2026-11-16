@@ -628,3 +628,58 @@ def test_head_checked_earlier_on_another_branch_does_not_reverse_tenure():
     ref["founder_label_events"][0]["created_at"] = "2026-11-15T12:00:00Z"
     assert founder_answer(ref, old, FOUNDER)["status"] == "answered"
     assert founder_answer(ref, new, FOUNDER)["status"] == "none"
+
+
+def test_missing_reference_keeps_the_ledger_first_head_in_the_seed():
+    """Codex P2 4581743728: PR 1 is on a later head and its reference entry is
+    missing; the seed must keep its original first head (from the ledger)."""
+    def world():
+        w = _ten_red()
+        w.prs[0]["heads"] = [(h(1), "2026-11-15T01:00:00Z"), (h(1, 2), "2026-11-15T01:30:00Z")]
+        w.prs[0]["head"] = h(1, 2)
+        return w
+    w = world()
+    led = w.ledger()
+    for e in led["entries"]:
+        if e["pr_number"] == 1:  # the ledger also saw the first head
+            led["entries"].append({**e, "head_sha": h(1), "current": False,
+                                   "runs": [{**e["runs"][0], "occurrence_log": [dict(
+                                       e["runs"][0]["occurrence_log"][0], created_at="2026-11-15T01:00:00Z",
+                                       event_key="first")]}]})
+            break
+    full_ref = w.reference()
+    base = qualification_v5(w.readiness(), led, full_ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    ref = copy.deepcopy(full_ref)
+    ref["prs"] = [p for p in ref["prs"] if p["pr_number"] != 1]
+    r = qualification_v5(w.readiness(), led, ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert [x["seed"] for x in r["windows"]] == [x["seed"] for x in base["windows"]]
+    assert _samples(r) == _samples(base)
+
+
+def test_head_that_becomes_current_again_accepts_a_later_label():
+    """Codex P2 4581743732: A -> B -> force-push back to A; a founder label
+    applied after the return binds to A, and not to B."""
+    from faraday_review.telemetry.qualification_v5 import founder_answer
+    a, b = h(1), h(1, 2)
+    ref = {"heads": [{"head_sha": a, "first_created_at": "2026-11-15T10:00:00Z", "first_suite_at": None},
+                     {"head_sha": b, "first_created_at": "2026-11-16T10:00:00Z", "first_suite_at": None}],
+           "founder_label_events": [{"event": "labeled", "label": "faraday/founder-red", "actor_node_id": FOUNDER,
+                                     "created_at": "2026-11-17T12:00:00Z", "id": 1}]}
+    points = [("2026-11-15T10:00:00Z", a), ("2026-11-16T10:00:00Z", b), ("2026-11-17T10:00:00Z", a)]
+    assert founder_answer(ref, a, FOUNDER, points)["status"] == "answered"
+    assert founder_answer(ref, b, FOUNDER, points)["status"] == "none"
+    # Without the return, the label is outside A's tenure.
+    assert founder_answer(ref, a, FOUNDER, points[:2])["status"] == "none"
+
+
+def test_occurrence_timestamps_are_compared_chronologically():
+    """Codex P2 4581743734: '2026-11-15T01:00:00+02:00' (23:00Z the day before)
+    is OLDER than '2026-11-14T23:30:00Z'; the latter is the latest occurrence."""
+    w = World().add(1, cls="red")
+    led = w.ledger()
+    occ = led["entries"][0]["runs"][0]["occurrence_log"][0]
+    led["entries"][0]["runs"][0]["occurrence_log"] = [
+        dict(occ, classifier_class="red", created_at="2026-11-15T01:00:00+02:00", event_key="a", escalated=True),
+        dict(occ, classifier_class="green", created_at="2026-11-14T23:30:00Z", event_key="b", escalated=False)]
+    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert pr(r, 1)["faraday_class"] == "green" and pr(r, 1)["escalated"] is False

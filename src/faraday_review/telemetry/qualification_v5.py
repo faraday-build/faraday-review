@@ -37,6 +37,7 @@ from .qualification import (
     GATE_THRESHOLD_FLOOR,
     QualificationError,
     _occurrence_exclusions,
+    _sort_key_ts,
     persisted_local_diagnostics,
     repo_identity,
 )
@@ -86,7 +87,9 @@ def _latest_qualifying(ledger: dict[str, Any], repository: str, pr: int, head: s
                         and occ.get("classifier_class") in CLASS_ORDER
                         and not _occurrence_exclusions(occ, run.get("policy_digest_verified", False),
                                                        run.get("policy_bundle_digest"), released)):
-                    rank = (str(occ.get("created_at")), str(occ.get("event_key")))
+                    # Chronological, not lexical: accepted timestamps may carry
+                    # different UTC offsets (Codex P2, #23).
+                    rank = (_sort_key_ts(occ.get("created_at")), str(occ.get("event_key")))
                     if best is None or rank > best[0]:
                         best = (rank, occ.get("classifier_class"), occ.get("escalated"))
     if best is None:
@@ -113,7 +116,7 @@ def _selection_class(ledger: dict[str, Any], repository: str, pr: int,
                 if (occ.get("eligible") and occ.get("final_status") == "completed"
                         and occ.get("stale_state") == "fresh"
                         and occ.get("classifier_class") in CLASS_ORDER):
-                    rank = (0 if on_first else 1, str(occ.get("created_at")), str(occ.get("event_key")))
+                    rank = (0 if on_first else 1, _sort_key_ts(occ.get("created_at")), str(occ.get("event_key")))
                     if best is None or rank < best[0]:
                         best = (rank, occ["classifier_class"])
     return best[1] if best else None
@@ -125,52 +128,65 @@ def _arrival(ledger: dict[str, Any], repository: str, pr: int) -> str:
     depend on live reference evidence (r50d), and a PR whose early runs all
     failed arrives when it first completes, after windows that closed in the
     meantime, instead of being inserted ahead of them (Codex P2 #23)."""
-    times = [str(occ.get("created_at")) for entry in ledger["entries"]
+    times = [_sort_key_ts(occ.get("created_at")) for entry in ledger["entries"]
              if _key(entry["repository"], entry["pr_number"]) == _key(repository, pr)
              for run in entry["runs"] for occ in run["occurrence_log"]
              if occ.get("created_at") and occ.get("final_status") == "completed"]
-    return min(times) if times else ""
+    return min(times) if times else (0, "")
 
 
-def _seen_at(h: dict[str, Any]) -> str | None:
-    """When the head became current: GitHub's earliest check suite for the
-    commit (created on push), else its first shadow-run telemetry. The suite
-    time precedes the run, so a label applied while the run was still
-    queued or running is bound to the right head (Codex P2, #19)."""
-    times = [t for t in (h.get("first_suite_at"), h.get("first_created_at")) if t]
-    return min(times) if times else None
+def _ledger_points(ledger: dict[str, Any], repository: str, pr: int) -> list[tuple[str, str]]:
+    """(created_at, head_sha) of every recorded occurrence of the PR: the PR's
+    own head history as the ledger saw it."""
+    return [(str(occ["created_at"]), str(entry["head_sha"])) for entry in ledger["entries"]
+            if _key(entry["repository"], entry["pr_number"]) == _key(repository, pr)
+            for run in entry["runs"] for occ in run["occurrence_log"] if occ.get("created_at")]
 
 
-def _tenure(ref: dict[str, Any], head: str) -> tuple[str | None, str | None]:
-    """[start, end) during which `head` was the PR head (a later head's
-    arrival ends it). Heads are ordered by PR-specific evidence (the first
-    shadow-run telemetry of that PR at that head); a check-suite time may move
-    a head's start earlier (a label applied before its shadow run), but a
-    suite time older than the previous head's PR-specific arrival is ignored. A commit checked earlier
-    on another branch therefore cannot reverse the PR's head transitions
-    (Codex P2 #23, r50d)."""
-    heads = [h for h in ref["heads"] if _seen_at(h)]
-    order = sorted(heads, key=lambda h: (str(h.get("first_created_at") or _seen_at(h)), h["head_sha"]))
-    starts = []
-    for i, h in enumerate(order):
-        start = _seen_at(h)
-        prev = str(order[i - 1].get("first_created_at") or _seen_at(order[i - 1])) if i else None
-        if prev is not None and start < prev:
-            # Suite evidence older than the previous head's arrival comes from
-            # elsewhere (another branch): ignore it and use this head's own
-            # PR-specific arrival.
-            start = str(h.get("first_created_at") or prev)
-        starts.append(start)
-    for i, h in enumerate(order):
-        if h["head_sha"] == head:
-            nxt = next((starts[j] for j in range(i + 1, len(order)) if order[j]["head_sha"] != head), None)
-            return starts[i], nxt
-    return None, None
+def _first_head(ledger: dict[str, Any], repository: str, pr: int) -> str | None:
+    """The PR's first head as the ledger recorded it (earliest occurrence).
+    Used when the reference entry is missing, so the seed keeps the original
+    first head instead of the current one (Codex P2, #23)."""
+    points = _ledger_points(ledger, repository, pr)
+    return min(points, key=lambda p: (_sort_key_ts(p[0]), p[1]))[1] if points else None
 
 
-def founder_answer(ref: dict[str, Any], head: str, founder_node_id: str) -> dict[str, Any]:
-    start, end = _tenure(ref, head)
-    if start is None:
+def _intervals(ref: dict[str, Any], head: str,
+               points: list[tuple[str, str]] = ()) -> list[tuple[Any, Any]]:
+    """Every [start, end) interval (as chronological sort keys) during which
+    `head` was the PR head. Transitions come from PR-specific evidence: each
+    head's first shadow telemetry (reference) plus every recorded occurrence
+    (ledger), so a head that becomes current again, for example after a
+    force-push back, gets a second interval (Codex P2, #23). A check-suite
+    time may move a head's FIRST start earlier (a label applied before its
+    shadow run), but never before the previous transition; a suite time older
+    than that (a commit checked on another branch) is ignored."""
+    seen = [(str(h["first_created_at"]), h["head_sha"]) for h in ref["heads"] if h.get("first_created_at")]
+    seen += [(str(h["first_suite_at"]), h["head_sha"]) for h in ref["heads"]
+             if not h.get("first_created_at") and h.get("first_suite_at")]
+    seq = sorted(set(seen) | set(points), key=lambda p: (_sort_key_ts(p[0]), p[1]))
+    changes: list[list[Any]] = []
+    for t, sha in seq:
+        if not changes or changes[-1][1] != sha:
+            changes.append([_sort_key_ts(t), sha])
+    suites = {h["head_sha"]: h.get("first_suite_at") for h in ref["heads"]}
+    first_change = {}
+    for i, (_, sha) in enumerate(changes):
+        first_change.setdefault(sha, i)
+    for sha, i in first_change.items():
+        suite = suites.get(sha)
+        if suite:
+            key = _sort_key_ts(suite)
+            if key < changes[i][0] and (i == 0 or key > changes[i - 1][0]):
+                changes[i][0] = key
+    return [(changes[i][0], changes[i + 1][0] if i + 1 < len(changes) else None)
+            for i in range(len(changes)) if changes[i][1] == head]
+
+
+def founder_answer(ref: dict[str, Any], head: str, founder_node_id: str,
+                   points: list[tuple[str, str]] = ()) -> dict[str, Any]:
+    intervals = _intervals(ref, head, points)
+    if not intervals:
         return {"status": "none", "class": None, "labeled_at": None}
     present: dict[str, str] = {}
     ignored = 0
@@ -178,7 +194,8 @@ def founder_answer(ref: dict[str, Any], head: str, founder_node_id: str) -> dict
         if ev["actor_node_id"] != founder_node_id:
             ignored += 1
             continue
-        if ev["created_at"] < start or (end is not None and ev["created_at"] >= end):
+        at = _sort_key_ts(ev["created_at"])
+        if not any(start <= at and (end is None or at < end) for start, end in intervals):
             continue
         cls = ev["label"].removeprefix(LABEL_PREFIX)
         if cls not in CLASS_ORDER:
@@ -280,6 +297,8 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         q_cls, q_escalated = _latest_qualifying(ledger, c["repository"], c["pr_number"], c["head_sha"],
                                                 readiness.get("gate", {}).get("released_policy_digests"))
         cls = q_cls if q_cls is not None else c["classifier_class"]
+        first_head = (ref["first_head_sha"] if ref else
+                      _first_head(ledger, c["repository"], c["pr_number"]) or c["head_sha"])
         items.append({
             "qualifying": qualifying,
             "repository": c["repository"], "pr_number": int(c["pr_number"]), "head_sha": c["head_sha"],
@@ -287,11 +306,11 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
             "escalated": q_escalated,
             "reference": view,
             "exceptions": _exceptions(cls, view),
-            "founder_answer": (founder_answer(ref, c["head_sha"], founder_node_id) if ref
+            "founder_answer": (founder_answer(ref, c["head_sha"], founder_node_id,
+                                              _ledger_points(ledger, c["repository"], c["pr_number"])) if ref
                                else {"status": "none", "class": None, "labeled_at": None}),
-            "first_head_sha": ref["first_head_sha"] if ref else c["head_sha"],
-            "selection_class": _selection_class(
-                ledger, c["repository"], c["pr_number"], ref["first_head_sha"] if ref else c["head_sha"]) or cls,
+            "first_head_sha": first_head,
+            "selection_class": _selection_class(ledger, c["repository"], c["pr_number"], first_head) or cls,
             "_first_seen": _arrival(ledger, c["repository"], c["pr_number"]),
         })
 
