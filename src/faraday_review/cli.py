@@ -64,8 +64,10 @@ from .telemetry.monitor import (
     DEFAULT_STALL_HOURS,
     EXIT_CRITICAL,
     MonitorError,
+    frozen_from_marker,
     monitor_notify,
     next_body,
+    parse_marker,
     monitor_report,
 )
 from .telemetry.qualification_v5 import qualification_v5
@@ -830,6 +832,34 @@ def _cmd_monitor_notify(args) -> int:
     return 0
 
 
+def _cmd_monitor_frozen(args) -> int:
+    """Extract and VERIFY the previous run's frozen sampling windows from the
+    status-issue body (no network). Prints the state (none / loaded / invalid)
+    on stdout; writes --output only when loaded."""
+    if not _REPOSITORY_RE.match(args.repository):
+        print("monitor-frozen: invalid --repository", file=sys.stderr)
+        return 2
+    body = None
+    if args.previous_body:
+        try:
+            body = Path(args.previous_body).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            print("monitor-frozen: cannot read --previous-body", file=sys.stderr)
+            return 2
+    marker = parse_marker(body, args.repository) if body is not None else None
+    if body is not None and marker is None and "faraday-review-qualification-monitor:" in body:
+        state, doc = "invalid", None   # a marker is present but malformed: fail closed
+    else:
+        doc, state = frozen_from_marker(marker, args.repository)
+    target = Path(args.output)
+    if target.exists():
+        target.unlink()
+    if doc is not None:
+        target.write_text(json.dumps(doc, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    print(state)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="faraday-review")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -994,9 +1024,17 @@ def main(argv: list[str] | None = None) -> int:
     ntf.add_argument("--body-output", default=None,
                      help="write the issue body for this run (carries the sampling-window baseline forward)")
 
+    frz = sub.add_parser("monitor-frozen",
+                         help="extract and verify frozen sampling windows from the status-issue body (no network)")
+    frz.add_argument("--previous-body", default=None, help="current issue body; omit when no issue exists")
+    frz.add_argument("--repository", required=True)
+    frz.add_argument("--output", required=True)
+
     args = parser.parse_args(argv)
     if args.command == "monitor-report":
         return _cmd_monitor_report(args)
+    if args.command == "monitor-frozen":
+        return _cmd_monitor_frozen(args)
     if args.command == "monitor-notify":
         return _cmd_monitor_notify(args)
     qualification = {"adjudicate": _cmd_adjudicate, "aggregate": _cmd_aggregate,

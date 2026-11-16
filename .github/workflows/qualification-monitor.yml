@@ -197,6 +197,33 @@ jobs:
           faraday-review readiness --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
             --generated-at "$now" --output "$W/out/readiness.json" --enrollment "$W/enrollment.json"
 
+      - name: Previous frozen sampling windows (read-only)
+        # Single-source-of-truth correction: closed QA-1 sampling windows are
+        # frozen in the status-issue marker and reused verbatim. GET only, with
+        # the same read-only job token (public caller). Any read failure is
+        # "unavailable", and an altered record is "invalid": both make v5
+        # sampling fail closed and never affect v4.
+        id: frozen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CALLER_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          W="$RUNNER_TEMP/faraday-monitor"
+          state=unavailable
+          if listing=$(gh api "repos/$CALLER_REPO/issues?state=open&labels=faraday-review-qualification&creator=github-actions%5Bbot%5D&per_page=100"); then
+            number=$(printf '%s' "$listing" | python -I -c 'import json,sys; xs=sorted(i["number"] for i in json.load(sys.stdin) if i.get("pull_request") is None and i.get("title") == "Faraday Review qualification status" and (i.get("user") or {}).get("login") == "github-actions[bot]"); print(xs[0] if xs else "")') || number=ERR
+            if [ -z "$number" ]; then
+              state=$(faraday-review monitor-frozen --repository "$CALLER_REPO" --output "$W/frozen.json") || state=unavailable
+            elif [ "$number" != ERR ] && gh api "repos/$CALLER_REPO/issues/$number" --jq '.body // ""' > "$W/previous-body.md"; then
+              state=$(faraday-review monitor-frozen --previous-body "$W/previous-body.md" --repository "$CALLER_REPO" \
+                --output "$W/frozen.json") || state=unavailable
+            fi
+          fi
+          case "$state" in none|loaded|invalid|unavailable) ;; *) state=unavailable ;; esac
+          echo "frozen windows: $state"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+
       - name: QA-1 reference and proposed v5 gate (non-blocking)
         # GHO-AUTONOMOUS-PRODUCTION-011. Read-only reference evidence (GET
         # only, the same job token) and the PROPOSED v5 report. Never
@@ -209,6 +236,7 @@ jobs:
           # Must equal this job's timeout-minutes x 60 (guard-tested).
           JOB_TIMEOUT_SECONDS: "1800"
           V4_RESERVE_SECONDS: "300"
+          FROZEN_STATE: ${{ steps.frozen.outputs.state }}
         run: |
           set -uo pipefail
           W="$RUNNER_TEMP/faraday-monitor"
@@ -227,12 +255,19 @@ jobs:
             echo "state=skipped" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [ "${FROZEN_STATE:-}" = loaded ] && [ -s "$W/frozen.json" ]; then
+            frozen_args=(--frozen "$W/frozen.json" --frozen-status loaded)
+          elif [ "${FROZEN_STATE:-}" = none ] || [ "${FROZEN_STATE:-}" = invalid ]; then
+            frozen_args=(--frozen-status "$FROZEN_STATE")
+          else
+            frozen_args=(--frozen-status unavailable)
+          fi
           if timeout -k 30 "$ref_budget" faraday-review reference --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
                --enrollment "$W/enrollment.json" --collected-at "$now" --max-requests "$MAX_REQUESTS" \
                --output "$W/out/reference.json" \
              && timeout -k 30 120 faraday-review qualification-v5 --readiness "$W/out/readiness.json" \
                --ledger "$W/out/ledger.json" --reference "$W/out/reference.json" --generated-at "$now" \
-               --output "$W/out/qualification-v5.json" --enrollment "$W/enrollment.json"; then
+               --output "$W/out/qualification-v5.json" --enrollment "$W/enrollment.json" "${frozen_args[@]}"; then
             echo "state=available" >> "$GITHUB_OUTPUT"
           else
             rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"

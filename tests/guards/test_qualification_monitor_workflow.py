@@ -370,3 +370,45 @@ def test_issue_body_update_uses_the_carried_forward_body():
     assert '--body-output "$W/body.md"' in run
     assert 'issues/$number" -F body=@"$W/body.md"' in run
     assert 'issues/$number" -F body=@"$W/out/status.md"' not in run
+
+
+def test_frozen_windows_step_is_read_only_and_precedes_v5():
+    """Single-source-of-truth correction: the previous frozen record is read
+    with GET only, the same read-only job token and unchanged permissions,
+    before the v5 step."""
+    names = [s.get("name", "") for s in _steps("monitor")]
+    i = _index("monitor", "Previous frozen sampling windows (read-only)")
+    assert i < _index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")
+    assert i > _index("monitor", "Install reviewer")
+    step = _steps("monitor")[i]
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    run = step["run"]
+    import re
+    for line in run.splitlines():
+        if "gh api" in line:
+            assert not re.search(r"(^|\s)(-X|--method|-f|-F|--field|--raw-field|--input)(\s|=|$)", line), line
+    assert "faraday-review monitor-frozen" in run
+    assert "issues" not in _jobs()["monitor"]["permissions"]  # no new permission
+    assert len(names) == len(set(names))
+
+
+@pytest.mark.parametrize("state,exists,expect", [
+    ("loaded", True, "--frozen /w/frozen.json --frozen-status loaded"),
+    ("loaded", False, "--frozen-status unavailable"),
+    ("none", False, "--frozen-status none"),
+    ("invalid", False, "--frozen-status invalid"),
+    ("unavailable", False, "--frozen-status unavailable"),
+    ("", False, "--frozen-status unavailable"),
+    ("garbage", False, "--frozen-status unavailable")])
+def test_v5_step_maps_the_frozen_state_fail_closed(tmp_path, state, exists, expect):
+    run = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]["run"]
+    start = run.index('if [ "${FROZEN_STATE:-}" = loaded ]')
+    end = run.index("fi\n", start) + 3
+    w = tmp_path / "w"
+    w.mkdir()
+    if exists:
+        (w / "frozen.json").write_text("{}")
+    snippet = run[start:end].replace("$W/", str(w) + "/") + 'echo "${frozen_args[@]}"\n'
+    res = subprocess.run(["bash", "-c", snippet], env={"FROZEN_STATE": state, "PATH": "/usr/bin:/bin"},
+                         capture_output=True, text=True)
+    assert res.stdout.strip() == expect.replace("/w/", str(w) + "/")

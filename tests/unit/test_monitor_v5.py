@@ -302,33 +302,75 @@ def test_unavailable_v5_records_no_windows_and_raises_no_false_reroll(tmp_path):
     assert "sampling_rerolled" not in notification(status["marker"], prev)
 
 
+def _rec(n0=1):
+    return {"seed": "c" * 64, "members": [[n, "red", True] for n in range(n0, n0 + 5)], "sampled": [n0]}
+
+
+def _frozen_marker(records, **kw):
+    from faraday_review.telemetry.qualification_v5 import window_digest
+    return _marker([], frozen_windows=records, closed_windows={k: window_digest(r) for k, r in records.items()},
+                   **kw)
+
+
+def _body(marker):
+    return "x\n<!-- faraday-review-qualification-monitor: " + json.dumps(marker) + " -->\n"
+
+
 def test_body_carries_the_window_baseline_across_an_unavailable_run(tmp_path):
     from faraday_review.telemetry.monitor import next_body
     arc, built = _world(tmp_path)
     _monitor(arc, built, extra=("--qualification-v5-unavailable", "reference_step_failed"))
-    body_prev = "x\n<!-- faraday-review-qualification-monitor: " + json.dumps(
-        _marker([], closed_windows={"0": "a" * 16})) + " -->\n"
-    body = next_body(status_path=arc.tmp / "status.json", previous_body=body_prev, repository=REPO)
-    assert parse_marker(body, REPO)["closed_windows"] == {"0": "a" * 16}
-    # An available run records its own windows; nothing is carried over them.
-    arc2, built2 = _world(tmp_path / "b", n=10)
-    v5 = _v5(arc2, built2, tier="A0")
-    _, status2, _ = _monitor(arc2, built2, extra=("--qualification-v5", v5))
-    body2 = next_body(status_path=arc2.tmp / "status.json", previous_body=body_prev, repository=REPO)
-    assert parse_marker(body2, REPO)["closed_windows"] == status2["marker"]["closed_windows"]
+    prev = _frozen_marker({"0": _rec(1)})
+    body = next_body(status_path=arc.tmp / "status.json", previous_body=_body(prev), repository=REPO)
+    got = parse_marker(body, REPO)
+    assert got["frozen_windows"] == prev["frozen_windows"] and got["closed_windows"] == prev["closed_windows"]
+
+
+def test_frozen_windows_are_append_only_and_previous_records_win(tmp_path):
+    """A verified previous record always wins for its index (never rewritten);
+    only windows that closed since are appended, contiguously."""
+    from faraday_review.telemetry.monitor import next_body
+    arc, built = _world(tmp_path, n=10)
+    v5 = _v5(arc, built, tier="A0")
+    _, status, _ = _monitor(arc, built, extra=("--qualification-v5", v5))
+    assert set(status["marker"]["frozen_windows"]) == {"0", "1"}
+    prev = _frozen_marker({"0": _rec(101)})
+    got = parse_marker(next_body(status_path=arc.tmp / "status.json", previous_body=_body(prev),
+                                 repository=REPO), REPO)
+    assert got["frozen_windows"]["0"] == _rec(101)                       # previous wins
+    assert got["frozen_windows"]["1"] == status["marker"]["frozen_windows"]["1"]  # appended
+    assert got["closed_windows"]["0"] == prev["closed_windows"]["0"]
+
+
+def test_tampered_previous_record_is_not_carried_and_is_invalid(tmp_path):
+    from faraday_review.telemetry.monitor import frozen_from_marker, next_body
+    prev = _frozen_marker({"0": _rec(1)})
+    prev["frozen_windows"]["0"]["sampled"] = [2]          # record no longer matches its digest
+    assert frozen_from_marker(prev, REPO) == (None, "invalid")
+    assert frozen_from_marker(_marker([], closed_windows={"0": "a" * 16}), REPO) == (None, "invalid")
+    assert frozen_from_marker(_marker([]), REPO) == (None, "none")
+    assert frozen_from_marker(None, REPO) == (None, "none")
+    good = _frozen_marker({"0": _rec(1)})
+    doc, state = frozen_from_marker(good, REPO)
+    assert state == "loaded" and doc["windows"] == good["frozen_windows"]
+    arc, built = _world(tmp_path)
+    _monitor(arc, built, extra=("--qualification-v5-unavailable", "reference_step_failed"))
+    got = parse_marker(next_body(status_path=arc.tmp / "status.json", previous_body=_body(prev), repository=REPO),
+                       REPO)
+    assert "frozen_windows" not in got
 
 
 def test_monitor_notify_cli_writes_the_body(tmp_path):
     arc, built = _world(tmp_path)
     _monitor(arc, built, extra=("--qualification-v5-unavailable", "reference_step_failed"))
     prev = tmp_path / "prev.md"
-    prev.write_text("x\n<!-- faraday-review-qualification-monitor: " + json.dumps(
-        _marker([], closed_windows={"3": "b" * 16})) + " -->\n")
+    marker = _frozen_marker({"0": _rec(1)})
+    prev.write_text(_body(marker))
     out = tmp_path / "body.md"
     assert main(["monitor-notify", "--status", str(arc.tmp / "status.json"), "--repository", REPO,
                  "--previous-body", str(prev), "--comment-output", str(tmp_path / "c.md"),
                  "--body-output", str(out)]) == 0
-    assert parse_marker(out.read_text(), REPO)["closed_windows"] == {"3": "b" * 16}
+    assert parse_marker(out.read_text(), REPO)["frozen_windows"] == marker["frozen_windows"]
 
 
 def test_unavailable_run_keeps_the_founder_queue_baseline_and_recovery_does_not_renotify(tmp_path):
@@ -348,3 +390,55 @@ def test_unavailable_run_keeps_the_founder_queue_baseline_and_recovery_does_not_
     # Recovery with exactly the same outstanding work: no founder-queue notification.
     recovered = _marker(queue, founder_queue_total=2, founder_queue_digest="d1")
     assert "founder_queue" not in notification(recovered, carried)
+
+
+def test_monitor_frozen_cli_states(tmp_path):
+    out = tmp_path / "frozen.json"
+    assert main(["monitor-frozen", "--repository", REPO, "--output", str(out)]) == 0 and not out.exists()
+    good = tmp_path / "good.md"
+    good.write_text(_body(_frozen_marker({"0": _rec(1)})))
+    assert main(["monitor-frozen", "--previous-body", str(good), "--repository", REPO, "--output", str(out)]) == 0
+    doc = json.loads(out.read_text())
+    assert doc["windows"]["0"] == _rec(1) and doc["repository"] == REPO
+    bad = tmp_path / "bad.md"
+    m = _frozen_marker({"0": _rec(1)})
+    m["frozen_windows"]["0"]["seed"] = "d" * 64
+    bad.write_text(_body(m))
+    assert main(["monitor-frozen", "--previous-body", str(bad), "--repository", REPO, "--output", str(out)]) == 0
+    assert not out.exists()
+    garbled = tmp_path / "garbled.md"
+    garbled.write_text("<!-- faraday-review-qualification-monitor: {not json -->\n")
+    assert main(["monitor-frozen", "--previous-body", str(garbled), "--repository", REPO, "--output", str(out)]) == 0
+    assert not out.exists()
+
+
+def test_monitor_frozen_cli_prints_the_state(tmp_path, capsys):
+    out = tmp_path / "f.json"
+    garbled = tmp_path / "g.md"
+    garbled.write_text("<!-- faraday-review-qualification-monitor: {not json -->\n")
+    main(["monitor-frozen", "--previous-body", str(garbled), "--repository", REPO, "--output", str(out)])
+    assert capsys.readouterr().out.strip() == "invalid"
+    ok = tmp_path / "ok.md"
+    ok.write_text(_body(_frozen_marker({"0": _rec(1)})))
+    main(["monitor-frozen", "--previous-body", str(ok), "--repository", REPO, "--output", str(out)])
+    assert capsys.readouterr().out.strip() == "loaded"
+
+
+def test_well_digested_but_malformed_record_is_invalid():
+    """A record whose digest matches but which is structurally wrong (4
+    members) is still rejected: the digest alone never makes a record usable."""
+    from faraday_review.telemetry.monitor import frozen_from_marker
+    bad = _rec(1)
+    bad["members"].pop()
+    assert frozen_from_marker(_frozen_marker({"0": bad}), REPO) == (None, "invalid")
+
+
+def test_marker_keeps_the_oldest_windows_when_capped(tmp_path, monkeypatch):
+    """Frozen records must stay contiguous from window 0, so the cap keeps the
+    OLDEST closed windows."""
+    from faraday_review.telemetry import monitor as mon
+    monkeypatch.setattr(mon, "MAX_WINDOW_MARKER", 1)
+    arc, built = _world(tmp_path, n=10)
+    v5 = _v5(arc, built, tier="A0")
+    _, status, _ = _monitor(arc, built, extra=("--qualification-v5", v5))
+    assert set(status["marker"]["frozen_windows"]) == {"0"} and set(status["marker"]["closed_windows"]) == {"0"}

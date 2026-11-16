@@ -52,6 +52,7 @@ from .qualification import (
     repo_identity,
     require_timestamp,
 )
+from .qualification_v5 import FROZEN_FORMAT, frozen_record, frozen_record_errors, window_digest
 
 MONITOR_FORMAT = "faraday-review/qualification-monitor/v1"
 CHECKPOINTS = (5, 10, 15, 20)
@@ -272,21 +273,22 @@ def _anomaly_counts(anomalies: list[dict[str, Any]]) -> dict[str, int]:
 
 MAX_QUEUE_MARKER = 500
 # Closed-window digests kept in the issue marker (the newest; ~5 PRs each).
-MAX_WINDOW_MARKER = 200
+MAX_WINDOW_MARKER = 100
 # v5 baselines a run without an available v5 report carries forward from the previous marker.
-CARRIED_MARKER_FIELDS = ("founder_queue", "founder_queue_total", "founder_queue_digest", "closed_windows")
+CARRIED_MARKER_FIELDS = ("founder_queue", "founder_queue_total", "founder_queue_digest")
 # Founder-queue lines rendered into the issue body (65,536-character limit);
 # the full queue stays in status.json (Codex P2 r2, #20).
 MAX_RENDERED_QUEUE = 50
 
 
-def v5_summary(v5: dict[str, Any] | None, unavailable: str | None) -> dict[str, Any]:
+def v5_summary(v5: dict[str, Any] | None, unavailable: str | None,
+               repository: str | None = None) -> dict[str, Any]:
     """The QA-1 proposed gate, summarized for the status view. Never
     authoritative: v4 above stays the gate of record until adoption."""
     if v5 is None:
         return {"available": False, "reason": unavailable or "not_computed"}
     c, g = v5["counts"], v5["gate"]["conditions"]
-    return {
+    summary = {
         "available": True, "status": v5["status"], "authoritative": v5["authoritative"],
         "verified": c["verified"], "threshold": v5["threshold"],
         "verified_green": c["verified_green"], "green_minimum": g["green_coverage"]["minimum"],
@@ -305,10 +307,16 @@ def v5_summary(v5: dict[str, Any] | None, unavailable: str | None) -> dict[str, 
         # issue marker keeps the previous run's digests, so a later run that
         # re-rolls a closed window is detected and routed to the founder as an
         # exception (r50d, QA-1 refinement 6).
-        "closed_windows": {str(w["index"]): _sha256(canonical_bytes(
-            {"members": w["members"], "sampled": w["sampled"]}))[:16]
-            for w in v5["windows"] if w["closed"]},
     }
+    if repository is not None:
+        # Frozen record of every CLOSED window (seed, members with their class
+        # and escalation at closure, samples) plus its digest. The marker keeps
+        # them append-only; the next run reuses them verbatim, and a re-roll is
+        # still detected by digest (single-source-of-truth correction).
+        records = frozen_record(v5, repository)["windows"]
+        summary["frozen_windows"] = records
+        summary["closed_windows"] = {k: window_digest(r) for k, r in records.items()}
+    return summary
 
 
 def _queue_items(summary: dict[str, Any]) -> list[str]:
@@ -344,7 +352,7 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
                  or any(r["stalled"] for r in not_completed) or cond["status"] == "fail"
                  or infra["failed_runs"] > 0 or bool(readiness["qualification"]["incomplete_prs"]))
     with_v5 = v5 is not None or v5_unavailable is not None
-    summary = v5_summary(v5, v5_unavailable) if with_v5 else None
+    summary = v5_summary(v5, v5_unavailable, repository) if with_v5 else None
     if summary is not None and summary.get("founder_queue"):
         attention = True
     status = "CRITICAL" if critical else ("ATTENTION" if attention else "OK")
@@ -419,13 +427,15 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
         doc["marker"]["founder_queue"] = items[:MAX_QUEUE_MARKER]
         doc["marker"]["founder_queue_total"] = len(items)
         doc["marker"]["founder_queue_digest"] = _sha256(canonical_bytes(items))
-        if "closed_windows" in summary:
+        if "frozen_windows" in summary:
             # Only an AVAILABLE v5 report records windows. An unavailable run
             # (timeout, budget skip, rejected report) records none, so it is
-            # never compared as "every window vanished" (Codex P2, #24).
-            closed = summary["closed_windows"]
-            keep = sorted(closed, key=int)[-MAX_WINDOW_MARKER:]
-            doc["marker"]["closed_windows"] = {k: closed[k] for k in keep}
+            # never compared as "every window vanished" (Codex P2, #24). The
+            # OLDEST windows are kept (frozen records must be contiguous from 0);
+            # windows beyond the cap stay unfrozen.
+            keep = sorted(summary["frozen_windows"], key=int)[:MAX_WINDOW_MARKER]
+            doc["marker"]["frozen_windows"] = {k: summary["frozen_windows"][k] for k in keep}
+            doc["marker"]["closed_windows"] = {k: summary["closed_windows"][k] for k in keep}
     return doc
 
 
@@ -675,7 +685,29 @@ def parse_marker(body: str, repository: str) -> dict[str, Any] | None:
             isinstance(k, str) and k.isdigit() and isinstance(v, str) and len(v) == 16
             for k, v in windows.items()):
         return None
+    frozen = marker.get("frozen_windows", {})
+    if not isinstance(frozen, dict) or not all(isinstance(k, str) and isinstance(v, dict)
+                                              for k, v in frozen.items()):
+        return None
     return marker
+
+
+def frozen_from_marker(marker: dict[str, Any] | None, repository: str) -> tuple[dict[str, Any] | None, str]:
+    """The previous run's frozen sampling windows, VERIFIED: every record is
+    well-formed (qualification-v5-frozen/v1), contiguous from window 0, and
+    matches the digest recorded next to it. Returns (doc, "loaded"), or
+    (None, "none") when there is no prior record, or (None, "invalid"), which
+    makes v5 sampling fail closed."""
+    if not marker or not marker.get("frozen_windows"):
+        if marker and marker.get("closed_windows"):
+            return None, "invalid"   # digests without records: cannot be reused
+        return None, "none"
+    records, digests = marker["frozen_windows"], marker.get("closed_windows", {})
+    doc = {"format": FROZEN_FORMAT, "repository": repository, "windows": records}
+    if frozen_record_errors(doc) or set(records) != set(digests) or any(
+            window_digest(records[k]) != digests[k] for k in records):
+        return None, "invalid"
+    return doc, "loaded"
 
 
 def rerolled_windows(current: dict[str, Any], previous: dict[str, Any] | None) -> list[str]:
@@ -770,6 +802,16 @@ def next_body(*, status_path: Path, previous_body: str | None, repository: str) 
     if previous:
         carried = {k: previous[k] for k in CARRIED_MARKER_FIELDS
                    if k not in status["marker"] and k in previous}
+        # Frozen windows are APPEND-ONLY: a verified previous record always
+        # wins for its index; this run only adds windows that closed since.
+        prev_doc, prev_state = frozen_from_marker(previous, repository)
+        if prev_state == "loaded":
+            fw = dict(prev_doc["windows"])
+            cw = dict(previous["closed_windows"])
+            for k, rec in status["marker"].get("frozen_windows", {}).items():
+                if k not in fw and len(fw) < MAX_WINDOW_MARKER and int(k) == len(fw):
+                    fw[k], cw[k] = rec, status["marker"]["closed_windows"][k]
+            carried["frozen_windows"], carried["closed_windows"] = fw, cw
         if carried:
             status = dict(status, marker=dict(status["marker"], **carried))
     return render_markdown(status)
