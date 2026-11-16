@@ -683,3 +683,73 @@ def test_occurrence_timestamps_are_compared_chronologically():
         dict(occ, classifier_class="green", created_at="2026-11-14T23:30:00Z", event_key="b", escalated=False)]
     r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
     assert pr(r, 1)["faraday_class"] == "green" and pr(r, 1)["escalated"] is False
+
+
+# ---- D3-1: head-specific adjudication-period model ---------------------------------------------
+
+def _ref(heads, events):
+    return {"heads": [{"head_sha": s, "first_created_at": t, "first_suite_at": None} for s, t in heads],
+            "founder_label_events": [{"event": e[0], "label": f"faraday/founder-{e[1]}",
+                                      "actor_node_id": e[3] if len(e) > 3 else FOUNDER, "created_at": e[2],
+                                      "id": i + 1} for i, e in enumerate(events)]}
+
+
+def test_stale_rerun_on_an_old_head_does_not_end_the_current_heads_tenure():
+    """Codex P2 4581776085: fresh A, then fresh B, then a stale rerun on A.
+    A founder label on the still-current B binds to B."""
+    w = World().add(1, heads=[(h(1), "2026-11-15T01:00:00Z"), (h(1, 2), "2026-11-16T01:00:00Z")],
+                    events=[("labeled", "red", "2026-11-17T12:00:00Z")])
+    led = w.ledger()
+    occ = led["entries"][0]["runs"][0]["occurrence_log"][0]
+    led["entries"].append({"repository": REPO, "pr_number": 1, "head_sha": h(1), "current": False,
+                           "runs": [{"occurrence_log": [
+                               dict(occ, created_at="2026-11-15T01:00:00Z", event_key="a1"),
+                               dict(occ, created_at="2026-11-17T00:00:00Z", event_key="a-rerun",
+                                    stale_state="stale_before_publication")],
+                               "policy_digest_verified": True, "policy_bundle_digest": DIGEST}]})
+    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert pr(r, 1)["founder_answer"] == {"status": "answered", "class": "red", "labeled_at": "2026-11-17T12:00:00Z"}
+
+
+def test_removal_during_another_heads_tenure_is_replayed():
+    """Codex P2 4581776088: A -> B -> A. Red applied during the first A tenure,
+    removed during B, green applied after returning to A: the answer for A is
+    green (not ambiguous)."""
+    from faraday_review.telemetry.qualification_v5 import founder_answer
+    a, b = h(1), h(1, 2)
+    ref = _ref([(a, "2026-11-15T10:00:00Z"), (b, "2026-11-16T10:00:00Z")],
+               [("labeled", "red", "2026-11-15T12:00:00Z"), ("unlabeled", "red", "2026-11-16T12:00:00Z"),
+                ("labeled", "green", "2026-11-17T12:00:00Z")])
+    points = [("2026-11-15T10:00:00Z", a), ("2026-11-16T10:00:00Z", b), ("2026-11-17T10:00:00Z", a)]
+    assert founder_answer(ref, a, FOUNDER, points)["class"] == "green"
+    assert founder_answer(ref, a, FOUNDER, points)["status"] == "answered"
+    assert founder_answer(ref, b, FOUNDER, points)["status"] == "none"
+
+
+def test_a_stale_label_left_from_another_head_makes_the_answer_ambiguous():
+    """Fail closed: red applied on head A and never removed, green applied on
+    the current head B -> two founder labels present -> ambiguous."""
+    from faraday_review.telemetry.qualification_v5 import founder_answer
+    a, b = h(1), h(1, 2)
+    ref = _ref([(a, "2026-11-15T10:00:00Z"), (b, "2026-11-16T10:00:00Z")],
+               [("labeled", "red", "2026-11-15T12:00:00Z"), ("labeled", "green", "2026-11-16T12:00:00Z")])
+    assert founder_answer(ref, b, FOUNDER)["status"] == "ambiguous"
+
+
+def test_label_history_is_replayed_chronologically_not_in_input_order():
+    """Events arrive out of order and with UTC offsets; the replay uses time
+    order: label 23:30Z, then unlabel at 01:00+02:00 (= 23:00Z) is EARLIER ->
+    the label is still present."""
+    from faraday_review.telemetry.qualification_v5 import founder_answer
+    a = h(1)
+    ref = _ref([(a, "2026-11-15T10:00:00Z")],
+               [("labeled", "red", "2026-11-15T23:30:00Z"), ("unlabeled", "red", "2026-11-16T01:00:00+02:00"),
+                ("labeled", "red", "2026-11-15T22:00:00Z")])
+    ans = founder_answer(ref, a, FOUNDER)
+    assert ans["status"] == "answered" and ans["labeled_at"] == "2026-11-15T23:30:00Z"
+
+
+def test_answer_needs_a_datable_tenure_for_the_head():
+    from faraday_review.telemetry.qualification_v5 import founder_answer
+    ref = _ref([], [("labeled", "red", "2026-11-15T12:00:00Z")])
+    assert founder_answer(ref, h(1), FOUNDER)["status"] == "none"
