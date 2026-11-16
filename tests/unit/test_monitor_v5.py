@@ -329,3 +329,22 @@ def test_monitor_notify_cli_writes_the_body(tmp_path):
                  "--previous-body", str(prev), "--comment-output", str(tmp_path / "c.md"),
                  "--body-output", str(out)]) == 0
     assert parse_marker(out.read_text(), REPO)["closed_windows"] == {"3": "b" * 16}
+
+
+def test_unavailable_run_keeps_the_founder_queue_baseline_and_recovery_does_not_renotify(tmp_path):
+    """Codex P2 (#24): outstanding work -> v5 unavailable -> v5 recovers with
+    the same work must not re-notify the founder."""
+    from faraday_review.telemetry.monitor import next_body
+    queue = ["1:aaaaaaaaaaaa:sample", "2:bbbbbbbbbbbb:X1"]
+    prev_body = "x\n<!-- faraday-review-qualification-monitor: " + json.dumps(
+        _marker(queue, founder_queue_total=2, founder_queue_digest="d1")) + " -->\n"
+    arc, built = _world(tmp_path)
+    _, status, _ = _monitor(arc, built, extra=("--qualification-v5-unavailable", "reference_step_failed"))
+    assert "founder_queue" not in status["marker"]
+    assert notification(status["marker"], parse_marker(prev_body, REPO)) == []
+    carried = parse_marker(next_body(status_path=arc.tmp / "status.json", previous_body=prev_body,
+                                     repository=REPO), REPO)
+    assert carried["founder_queue"] == queue and carried["founder_queue_digest"] == "d1"
+    # Recovery with exactly the same outstanding work: no founder-queue notification.
+    recovered = _marker(queue, founder_queue_total=2, founder_queue_digest="d1")
+    assert "founder_queue" not in notification(recovered, carried)

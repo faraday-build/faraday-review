@@ -273,6 +273,8 @@ def _anomaly_counts(anomalies: list[dict[str, Any]]) -> dict[str, int]:
 MAX_QUEUE_MARKER = 500
 # Closed-window digests kept in the issue marker (the newest; ~5 PRs each).
 MAX_WINDOW_MARKER = 200
+# v5 baselines a run without an available v5 report carries forward from the previous marker.
+CARRIED_MARKER_FIELDS = ("founder_queue", "founder_queue_total", "founder_queue_digest", "closed_windows")
 # Founder-queue lines rendered into the issue body (65,536-character limit);
 # the full queue stays in status.json (Codex P2 r2, #20).
 MAX_RENDERED_QUEUE = 50
@@ -405,6 +407,11 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
     }
     if summary is not None:
         doc["qualification_v5"] = summary
+    if summary is not None and summary.get("available"):
+        # Only an AVAILABLE v5 report sets the founder-queue baseline. An
+        # unavailable run leaves it out, and the issue body carries the
+        # previous baseline forward, so a recovered run with the same
+        # outstanding work does not re-notify (Codex P2, #24).
         items = _queue_items(summary)
         # The visible list is capped (issue-body size); the digest and total
         # cover the whole queue, so an item beyond the cap still notifies
@@ -745,10 +752,11 @@ def render_comment(status: dict[str, Any], previous: dict[str, Any] | None,
 
 
 def next_body(*, status_path: Path, previous_body: str | None, repository: str) -> str:
-    """The issue body to write this run. When this run recorded no sampling
-    windows (v5 unavailable), the previous marker's closed-window baseline is
-    carried forward, so a re-roll across an unavailable run is still detected
-    by the next available run (Codex P2, #24)."""
+    """The issue body to write this run. When this run has no available v5
+    report, the previous marker's v5 baselines (founder queue and closed
+    windows) are carried forward. A re-roll across an unavailable run is
+    still detected, and unchanged outstanding work is not re-notified when
+    v5 recovers (Codex P2 ×2, #24)."""
     if not _REPOSITORY_RE.match(repository):
         raise MonitorError("invalid --repository")
     status = _load_json(status_path, "status document")
@@ -759,8 +767,11 @@ def next_body(*, status_path: Path, previous_body: str | None, repository: str) 
         raise MonitorError("status document is for another repository; refusing")
     _identity_guard(repository, [status])
     previous = parse_marker(previous_body, repository) if previous_body is not None else None
-    if "closed_windows" not in status["marker"] and previous and previous.get("closed_windows"):
-        status = dict(status, marker=dict(status["marker"], closed_windows=previous["closed_windows"]))
+    if previous:
+        carried = {k: previous[k] for k in CARRIED_MARKER_FIELDS
+                   if k not in status["marker"] and k in previous}
+        if carried:
+            status = dict(status, marker=dict(status["marker"], **carried))
     return render_markdown(status)
 
 
