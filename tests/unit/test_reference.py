@@ -55,6 +55,7 @@ class Api:
         self.visibility = {"visibility": "public", "private": False}
         self.statuses: list = []
         self.commit_count = None
+        self.commit_pulls: dict = {}
 
     @property
     def routes(self):
@@ -79,6 +80,7 @@ class Api:
             f"{b}/commits": (200, self.commits),
             f"{b}/issues/28/timeline": (200, self.timeline),
             f"{b}/commits/{HEAD}/status": (200, {"statuses": self.statuses}),
+            **{f"{b}/commits/{sha}/pulls": (200, prs) for sha, prs in self.commit_pulls.items()},
             f"{b}/commits/{HEAD}/check-suites": (200, {"total_count": 1, "check_suites": [
                 {"id": 1, "created_at": "2026-11-15T06:19:00Z"}]}),
             f"{b}/commits/{OLD}/check-suites": (200, {"total_count": 0, "check_suites": []}),
@@ -391,6 +393,22 @@ def test_truncated_pr_commit_list_never_reports_clear(monkeypatch, tmp_path, cou
     assert out["status"] == status
     if status == "incomplete":
         assert out["reason"] == "pr_commits_truncated" and out["reverts"] == []
+
+
+REBASED = "e" * 40
+
+
+@pytest.mark.parametrize("pulls,status", [([{"number": 28}], "adverse"), ([{"number": 27}], "clear"),
+                                          ([], "clear")])
+def test_revert_of_a_rebased_commit_is_attributed_by_its_pull_request(monkeypatch, tmp_path, pulls, status):
+    """Codex P2 (#22): a rebase merge lands new SHAs (only the last is
+    merge_commit_sha). A revert naming another rebased commit is attributed
+    through GitHub's commit-to-PR association."""
+    api = Api(merged=True)
+    api.commit_pulls = {REBASED: pulls}
+    api.commits = [{"sha": "d" * 40, "commit": {"message": f"Revert \"y\"\n\nThis reverts commit {REBASED}."}}]
+    out = only(run(monkeypatch, tmp_path, api, ts="2026-12-15T00:00:00Z")[1])["outcome"]
+    assert out["status"] == status
 
 
 class SuiteCount(Api):
