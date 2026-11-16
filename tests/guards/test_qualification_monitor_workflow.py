@@ -292,3 +292,20 @@ def test_report_consumes_v5_via_env_and_drops_rejected_reports():
     assert '--qualification-v5-unavailable reference_step_failed' in run
     assert '"${v5[@]}"' in run
     assert run.index('rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"') < run.index('case "$rc" in')
+
+
+def test_v5_step_is_wall_clock_bounded_and_reserves_time_for_v4():
+    """Codex P2 r2 (#20): the optional reference/v5 commands run under
+    `timeout`, so a slow or rate-limited collection cannot exhaust the
+    job timeout before the v4 status report runs."""
+    import re
+    step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
+    run = step["run"]
+    bounds = []
+    for cmd in ("faraday-review reference", "faraday-review qualification-v5"):
+        m = re.search(r"timeout -k (\d+) (\d+) " + re.escape(cmd), run)
+        assert m, f"{cmd} must run under timeout"
+        bounds.append(int(m.group(1)) + int(m.group(2)))
+    job_minutes = _jobs()["monitor"]["timeout-minutes"]
+    assert sum(bounds) <= (job_minutes - 15) * 60, "at least 15 minutes must remain for v4"
+    assert "continue-on-error" not in step

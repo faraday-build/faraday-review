@@ -211,3 +211,28 @@ def test_marker_carries_total_and_digest(tmp_path):
     _, status, _ = _monitor(arc, built, extra=("--qualification-v5", v5))
     m = status["marker"]
     assert m["founder_queue_total"] == len(m["founder_queue"]) and m["founder_queue_digest"].startswith("sha256:")
+
+
+def test_large_founder_queue_keeps_the_issue_body_under_the_limit(tmp_path):
+    """Codex P2 r2 (#20): 450 queued entries must not push status.md (the
+    issue body) past GitHub's 65,536-character limit; status.json keeps all."""
+    from faraday_review.telemetry import monitor
+    from faraday_review.telemetry.monitor import _queue_items, render_markdown
+    MAX_RENDERED_QUEUE = getattr(monitor, "MAX_RENDERED_QUEUE", 50)
+    from faraday_review.canonical import canonical_bytes
+    import hashlib
+    arc, built = _world(tmp_path)
+    v5 = _v5(arc, built, tier="A0")
+    _, status, _ = _monitor(arc, built, extra=("--qualification-v5", v5))
+    queue = [{"pr_number": n, "head_sha": f"{n:040d}", "reasons": ["X1", "X2", "X3", "sample"]}
+             for n in range(1, 451)]
+    status["qualification_v5"]["founder_queue"] = queue
+    items = _queue_items(status["qualification_v5"])
+    status["marker"]["founder_queue"] = items[:500]
+    status["marker"]["founder_queue_total"] = len(items)
+    status["marker"]["founder_queue_digest"] = hashlib.sha256(canonical_bytes(items)).hexdigest()
+    md = render_markdown(status)
+    assert len(md) < 65536
+    assert md.count("Apply exactly one") == MAX_RENDERED_QUEUE
+    assert f"… and {450 - MAX_RENDERED_QUEUE} more (full queue in status.json)" in md
+    assert "#### Founder queue (450)" in md

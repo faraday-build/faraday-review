@@ -207,10 +207,15 @@ jobs:
           set -uo pipefail
           W="$RUNNER_TEMP/faraday-monitor"
           now=$(cat "$W/now.txt")
-          if faraday-review reference --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
+          # Wall-clock bounds (Codex P2 r2, #20): a slow or rate-limited
+          # reference collection (Retry-After backoff) is killed and routed
+          # to the unavailable fallback, reserving the rest of the 30-minute
+          # job for the v4 status report. 600 s + 120 s, each with a 30 s
+          # kill grace, leaves at least 16 minutes for v4.
+          if timeout -k 30 600 faraday-review reference --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
                --enrollment "$W/enrollment.json" --collected-at "$now" --max-requests "$MAX_REQUESTS" \
                --output "$W/out/reference.json" \
-             && faraday-review qualification-v5 --readiness "$W/out/readiness.json" \
+             && timeout -k 30 120 faraday-review qualification-v5 --readiness "$W/out/readiness.json" \
                --ledger "$W/out/ledger.json" --reference "$W/out/reference.json" --generated-at "$now" \
                --output "$W/out/qualification-v5.json" --enrollment "$W/enrollment.json"; then
             echo "state=available" >> "$GITHUB_OUTPUT"

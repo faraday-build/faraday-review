@@ -271,6 +271,9 @@ def _anomaly_counts(anomalies: list[dict[str, Any]]) -> dict[str, int]:
 
 
 MAX_QUEUE_MARKER = 500
+# Founder-queue lines rendered into the issue body (65,536-character limit);
+# the full queue stays in status.json (Codex P2 r2, #20).
+MAX_RENDERED_QUEUE = 50
 
 
 def v5_summary(v5: dict[str, Any] | None, unavailable: str | None) -> dict[str, Any]:
@@ -479,7 +482,11 @@ def render_markdown(status: dict[str, Any]) -> str:
             lines += [f"- #{q['pr_number']} head `{q['head_sha'][:12]}`: {', '.join(q['reasons'])}. "
                       f"Apply exactly one `faraday/founder-<green|yellow|red|block>` label while the "
                       f"head is `{q['head_sha'][:12]}`."
-                      for q in v5["founder_queue"]] or ["- none: no exception or sample needs the founder"]
+                      for q in v5["founder_queue"][:MAX_RENDERED_QUEUE]] or [
+                          "- none: no exception or sample needs the founder"]
+            if len(v5["founder_queue"]) > MAX_RENDERED_QUEUE:
+                lines.append(f"- … and {len(v5['founder_queue']) - MAX_RENDERED_QUEUE} more "
+                             "(full queue in status.json)")
     lines += ["", "### Stalled / incomplete"]
     lines.append("- Incomplete PRs: " + (", ".join(f"#{n}" for n in status["incomplete_prs"])
                                          or "none"))
