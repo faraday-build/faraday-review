@@ -194,15 +194,47 @@ jobs:
           faraday-review readiness --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
             --generated-at "$now" --output "$W/out/readiness.json" --enrollment "$W/enrollment.json"
 
+      - name: QA-1 reference and proposed v5 gate (non-blocking)
+        # GHO-AUTONOMOUS-PRODUCTION-011. Read-only reference evidence (GET
+        # only, the same job token) and the PROPOSED v5 report. Never
+        # authoritative, and never able to stop the v4 status: on any
+        # failure the outputs are removed and v5 is reported unavailable.
+        id: v5
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MAX_REQUESTS: ${{ inputs.max_requests }}
+        run: |
+          set -uo pipefail
+          W="$RUNNER_TEMP/faraday-monitor"
+          now=$(cat "$W/now.txt")
+          if faraday-review reference --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
+               --enrollment "$W/enrollment.json" --collected-at "$now" --max-requests "$MAX_REQUESTS" \
+               --output "$W/out/reference.json" \
+             && faraday-review qualification-v5 --readiness "$W/out/readiness.json" \
+               --ledger "$W/out/ledger.json" --reference "$W/out/reference.json" --generated-at "$now" \
+               --output "$W/out/qualification-v5.json" --enrollment "$W/enrollment.json"; then
+            echo "state=available" >> "$GITHUB_OUTPUT"
+          else
+            rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"
+            echo "::warning::QA-1 reference/v5 step failed; the v4 qualification status is unaffected."
+            echo "state=unavailable" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Qualification status report
         id: report
         env:
           CALLER_REPO: ${{ github.repository }}
           STALL_HOURS: ${{ inputs.stall_hours }}
+          V5_STATE: ${{ steps.v5.outputs.state }}
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/faraday-monitor"
           now=$(cat "$W/now.txt")
+          if [ "$V5_STATE" = "available" ]; then
+            v5=(--qualification-v5 "$W/out/qualification-v5.json")
+          else
+            v5=(--qualification-v5-unavailable reference_step_failed)
+          fi
           manifests=()
           for m in "$W"/archive/collection-manifest-*.json; do
             [ -f "$m" ] || continue
@@ -213,7 +245,11 @@ jobs:
           faraday-review monitor-report --readiness "$W/out/readiness.json" --ledger "$W/out/ledger.json" \
             "${manifests[@]}" --archive-dir "$W/archive" --repository "$CALLER_REPO" \
             --generated-at "$now" --stall-hours "$STALL_HOURS" \
-            --output "$W/out/status.json" --markdown-output "$W/out/status.md" || rc=$?
+            --output "$W/out/status.json" --markdown-output "$W/out/status.md" "${v5[@]}" || rc=$?
+          # A v5 report the monitor rejected is never uploaded.
+          if ! python -I -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("qualification_v5", {}).get("available") else 1)' "$W/out/status.json" 2>/dev/null; then
+            rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"
+          fi
           case "$rc" in
             0) crit=false ;;
             3) crit=true ;;
