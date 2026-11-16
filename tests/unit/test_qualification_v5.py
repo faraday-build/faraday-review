@@ -256,9 +256,15 @@ def test_unknown_escalation_record_keeps_condition_unknown():
     assert w.run()["gate"]["conditions"]["escalation"]["status"] == "unknown"
 
 
-def test_non_qualifying_prs_are_ignored():
-    r = World().add(1, status="policy_digest_unverified").run()
-    assert r["prs"] == [] and r["counts"]["qualifying"] == 0
+def test_non_qualifying_prs_are_window_members_but_never_counted():
+    """r50d: a non-qualifying counted PR anchors window membership only; it is
+    never verified, queued or counted toward the gate."""
+    r = World().add(1, status="policy_digest_unverified", cls="block").run()
+    (p,) = r["prs"]
+    assert p["verification"] == "not_qualifying" and p["exceptions"] == []
+    assert r["counts"]["qualifying"] == 0 and r["counts"]["not_qualifying"] == 1
+    assert r["founder_queue"] == [] and r["counts"]["verified"] == 0
+    assert r["gate"]["conditions"]["exceptions_open"] == 0
 
 
 def _met_world(greens=5):
@@ -506,21 +512,74 @@ def test_incomplete_outcome_is_unknown_reference():
     assert pr(r, 1)["reference"]["reason"] == "outcome_incomplete"
 
 
-def test_selection_class_ignores_non_qualifying_occurrences():
-    """The selection class comes only from qualifying occurrences: an earlier
-    green run under an unreleased policy digest does not make a red PR the
-    window's green sample."""
+def test_selection_class_does_not_change_when_a_digest_is_released_later():
+    """r50d: selection uses only facts recorded once per occurrence. Whether
+    the earliest occurrence's digest is released can change later; that must
+    not change which members of a closed window are sampled."""
     w = World()
     for n in range(1, 6):
         w.add(n)
-    base = w.run()
     led = w.ledger()
-    target = next(n for n in range(1, 6) if n not in {s["pr_number"] for s in base["windows"][0]["sampled"]})
     for e in led["entries"]:
-        if e["pr_number"] == target:
+        if e["pr_number"] == 3:
             first = dict(e["runs"][0]["occurrence_log"][0], classifier_class="green",
                          created_at="2026-11-14T00:00:00Z", event_key="early", escalated=False)
             e["runs"].insert(0, {"occurrence_log": [first], "policy_digest_verified": True,
                                  "policy_bundle_digest": "sha256:" + "e" * 64})
-    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
-    assert [s["pr_number"] for s in r["windows"][0]["sampled"]] == [s["pr_number"] for s in base["windows"][0]["sampled"]]
+    before = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                              evidence={})["windows"]
+    released = w.readiness()
+    released["gate"]["released_policy_digests"].append("sha256:" + "e" * 64)
+    after = qualification_v5(released, led, w.reference(), generated_at=TS, founder_node_id=FOUNDER,
+                             evidence={})["windows"]
+    assert [x["sampled"] for x in after] == [x["sampled"] for x in before]
+    assert {"repository": REPO, "pr_number": 3} in before[0]["sampled"]
+
+
+
+
+def _ten_red():
+    w = World()
+    for n in range(1, 11):
+        w.add(n)
+    return w
+
+
+def _samples(r):
+    return [[s["pr_number"] for s in win["sampled"]] for win in r["windows"]]
+
+
+def test_later_non_qualifying_head_does_not_shift_windows():
+    """Codex P2 4581512015: marking PR 1 non-qualifying must not shift window
+    boundaries or drop the other windows' samples."""
+    base = _ten_red().run()
+    w = _ten_red()
+    w.prs[0]["status"] = "head_incomplete"
+    r = w.run()
+    assert _samples(r) == _samples(base)
+    assert [x["members"] for x in r["windows"]] == [x["members"] for x in base["windows"]]
+    assert pr(r, 1)["verification"] == "not_qualifying"
+
+
+def test_disappearing_receipt_does_not_reroll_the_seed():
+    """Codex P2 4581512018: PR 1's first-head receipt becoming unrecognized
+    (receipt absent, first_head_receipt_id null) must not re-roll its window."""
+    base = _ten_red().run()
+    w = _ten_red()
+    ref = w.reference()
+    ref["prs"][0]["codex"].update(status="absent", first_head_receipt_id=None, receipt_ids=[])
+    r = qualification_v5(w.readiness(), w.ledger(), ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert [x["seed"] for x in r["windows"]] == [x["seed"] for x in base["windows"]]
+    assert _samples(r) == _samples(base)
+
+
+def test_arrival_order_comes_from_the_ledger_not_live_reference_evidence():
+    """r50d: window membership follows the ledger's recorded first occurrence,
+    so rewritten or missing reference head timestamps cannot reorder windows."""
+    base = _ten_red().run()
+    w = _ten_red()
+    ref = w.reference()
+    for p in ref["prs"]:  # reverse the live reference's head timestamps
+        p["heads"][0]["first_created_at"] = f"2026-11-15T{23 - p['pr_number']:02d}:00:00Z"
+    r = qualification_v5(w.readiness(), w.ledger(), ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    assert [x["members"] for x in r["windows"]] == [x["members"] for x in base["windows"]]
