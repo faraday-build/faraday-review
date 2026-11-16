@@ -287,7 +287,11 @@ def v5_summary(v5: dict[str, Any] | None, unavailable: str | None) -> dict[str, 
         "verified": c["verified"], "threshold": v5["threshold"],
         "verified_green": c["verified_green"], "green_minimum": g["green_coverage"]["minimum"],
         "window_open": c["window_open"], "reference_unknown": c["reference_unknown"],
-        "exceptions_open": c["exception_open"], "samples_pending": c["sample_pending"],
+        # Outstanding work comes from the gate conditions, which count every
+        # unanswered exception/sample including those whose reference is
+        # unknown; the per-PR verification counts are mutually exclusive
+        # (Codex P2, #24).
+        "exceptions_open": g["exceptions_open"], "samples_pending": g["sampling"]["pending"],
         "escalation": g["escalation"]["status"], "sampling": g["sampling"]["status"],
         "confirmed_material_disagreements": g["confirmed_material_disagreements"],
         "met": v5["gate"]["met"],

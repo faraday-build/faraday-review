@@ -236,3 +236,18 @@ def test_large_founder_queue_keeps_the_issue_body_under_the_limit(tmp_path):
     assert md.count("Apply exactly one") == MAX_RENDERED_QUEUE
     assert f"… and {450 - MAX_RENDERED_QUEUE} more (full queue in status.json)" in md
     assert "#### Founder queue (450)" in md
+
+
+def test_outstanding_totals_come_from_gate_conditions(tmp_path):
+    """Codex P2 (#24): an unanswered Block whose reference is unknown is
+    counted in gate.conditions.exceptions_open (not counts.exception_open);
+    the status must report the outstanding totals from the conditions."""
+    arc, built = _world(tmp_path)
+    v5 = _v5(arc, built, tier="A0")
+    doc = json.loads(open(v5).read())
+    doc["gate"]["conditions"]["exceptions_open"] = doc["counts"]["exception_open"] + 1
+    doc["gate"]["conditions"]["sampling"]["pending"] = doc["counts"]["sample_pending"] + 2
+    from faraday_review.telemetry.monitor import v5_summary
+    s = v5_summary(doc, None)
+    assert s["exceptions_open"] == doc["gate"]["conditions"]["exceptions_open"]
+    assert s["samples_pending"] == doc["gate"]["conditions"]["sampling"]["pending"]
