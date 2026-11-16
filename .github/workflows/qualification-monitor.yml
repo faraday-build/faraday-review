@@ -364,7 +364,7 @@ jobs:
           fi
           gh api "repos/$CALLER_REPO/issues/$number" --jq '.body // ""' > "$W/previous-body.md"
           faraday-review monitor-notify --status "$W/out/status.json" --repository "$CALLER_REPO" \
-            --previous-body "$W/previous-body.md" --comment-output "$W/comment.md"
+            --previous-body "$W/previous-body.md" --comment-output "$W/comment.md" --body-output "$W/body.md"
           # Comment first, then advance the marker in the body: if the
           # comment fails the body keeps the old marker, so the next run
           # notifies again (Codex P2, #17).
@@ -372,5 +372,5 @@ jobs:
             printf '\n[Monitor run](%s)\n' "$RUN_URL" >> "$W/comment.md"
             gh api -X POST "repos/$CALLER_REPO/issues/$number/comments" -F body=@"$W/comment.md" --silent
           fi
-          gh api -X PATCH "repos/$CALLER_REPO/issues/$number" -F body=@"$W/out/status.md" --silent
+          gh api -X PATCH "repos/$CALLER_REPO/issues/$number" -F body=@"$W/body.md" --silent
           echo "updated issue #$number"

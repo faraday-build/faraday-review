@@ -361,3 +361,12 @@ def test_report_maps_v5_state_to_arguments(state, expect):
     res = subprocess.run(["bash", "-c", snippet], env={"V5_STATE": state, "W": "/w", "PATH": "/usr/bin:/bin"},
                          capture_output=True, text=True)
     assert res.stdout.strip() == expect
+
+
+def test_issue_body_update_uses_the_carried_forward_body():
+    """Codex P2 (#24): the existing-issue PATCH writes monitor-notify's body,
+    which carries the sampling-window baseline across unavailable runs."""
+    run = "\n".join(s.get("run", "") for s in _steps("status-issue"))
+    assert '--body-output "$W/body.md"' in run
+    assert 'issues/$number" -F body=@"$W/body.md"' in run
+    assert 'issues/$number" -F body=@"$W/out/status.md"' not in run

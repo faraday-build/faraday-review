@@ -290,3 +290,42 @@ def test_marker_records_closed_window_digests(tmp_path):
     assert any(not w["closed"] for w in doc["windows"])  # an open window is never recorded
     assert closed and set(status["marker"]["closed_windows"]) == {str(w["index"]) for w in closed}
     assert all(len(v) == 16 for v in status["marker"]["closed_windows"].values())
+
+
+def test_unavailable_v5_records_no_windows_and_raises_no_false_reroll(tmp_path):
+    """Codex P2 (#24): an unavailable v5 run must not write `closed_windows: {}`,
+    which would read as every previously recorded window having vanished."""
+    arc, built = _world(tmp_path)
+    _, status, _ = _monitor(arc, built, extra=("--qualification-v5-unavailable", "reference_step_failed"))
+    assert "closed_windows" not in status["marker"]
+    prev = _marker([], closed_windows={"0": "a" * 16})
+    assert "sampling_rerolled" not in notification(status["marker"], prev)
+
+
+def test_body_carries_the_window_baseline_across_an_unavailable_run(tmp_path):
+    from faraday_review.telemetry.monitor import next_body
+    arc, built = _world(tmp_path)
+    _monitor(arc, built, extra=("--qualification-v5-unavailable", "reference_step_failed"))
+    body_prev = "x\n<!-- faraday-review-qualification-monitor: " + json.dumps(
+        _marker([], closed_windows={"0": "a" * 16})) + " -->\n"
+    body = next_body(status_path=arc.tmp / "status.json", previous_body=body_prev, repository=REPO)
+    assert parse_marker(body, REPO)["closed_windows"] == {"0": "a" * 16}
+    # An available run records its own windows; nothing is carried over them.
+    arc2, built2 = _world(tmp_path / "b", n=10)
+    v5 = _v5(arc2, built2, tier="A0")
+    _, status2, _ = _monitor(arc2, built2, extra=("--qualification-v5", v5))
+    body2 = next_body(status_path=arc2.tmp / "status.json", previous_body=body_prev, repository=REPO)
+    assert parse_marker(body2, REPO)["closed_windows"] == status2["marker"]["closed_windows"]
+
+
+def test_monitor_notify_cli_writes_the_body(tmp_path):
+    arc, built = _world(tmp_path)
+    _monitor(arc, built, extra=("--qualification-v5-unavailable", "reference_step_failed"))
+    prev = tmp_path / "prev.md"
+    prev.write_text("x\n<!-- faraday-review-qualification-monitor: " + json.dumps(
+        _marker([], closed_windows={"3": "b" * 16})) + " -->\n")
+    out = tmp_path / "body.md"
+    assert main(["monitor-notify", "--status", str(arc.tmp / "status.json"), "--repository", REPO,
+                 "--previous-body", str(prev), "--comment-output", str(tmp_path / "c.md"),
+                 "--body-output", str(out)]) == 0
+    assert parse_marker(out.read_text(), REPO)["closed_windows"] == {"3": "b" * 16}

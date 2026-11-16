@@ -412,9 +412,13 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
         doc["marker"]["founder_queue"] = items[:MAX_QUEUE_MARKER]
         doc["marker"]["founder_queue_total"] = len(items)
         doc["marker"]["founder_queue_digest"] = _sha256(canonical_bytes(items))
-        closed = summary.get("closed_windows", {})
-        keep = sorted(closed, key=int)[-MAX_WINDOW_MARKER:]
-        doc["marker"]["closed_windows"] = {k: closed[k] for k in keep}
+        if "closed_windows" in summary:
+            # Only an AVAILABLE v5 report records windows. An unavailable run
+            # (timeout, budget skip, rejected report) records none, so it is
+            # never compared as "every window vanished" (Codex P2, #24).
+            closed = summary["closed_windows"]
+            keep = sorted(closed, key=int)[-MAX_WINDOW_MARKER:]
+            doc["marker"]["closed_windows"] = {k: closed[k] for k in keep}
     return doc
 
 
@@ -738,6 +742,26 @@ def render_comment(status: dict[str, Any], previous: dict[str, Any] | None,
     lines += ["", "The issue body holds the full status. Qualification evidence only; "
               "authorizes nothing."]
     return "\n".join(lines) + "\n"
+
+
+def next_body(*, status_path: Path, previous_body: str | None, repository: str) -> str:
+    """The issue body to write this run. When this run recorded no sampling
+    windows (v5 unavailable), the previous marker's closed-window baseline is
+    carried forward, so a re-roll across an unavailable run is still detected
+    by the next available run (Codex P2, #24)."""
+    if not _REPOSITORY_RE.match(repository):
+        raise MonitorError("invalid --repository")
+    status = _load_json(status_path, "status document")
+    if not isinstance(status, dict) or status.get("format") != MONITOR_FORMAT:
+        raise MonitorError("not a qualification monitor status document")
+    if not isinstance(status.get("repository"), str) or \
+            repo_identity(status["repository"]) != repo_identity(repository):
+        raise MonitorError("status document is for another repository; refusing")
+    _identity_guard(repository, [status])
+    previous = parse_marker(previous_body, repository) if previous_body is not None else None
+    if "closed_windows" not in status["marker"] and previous and previous.get("closed_windows"):
+        status = dict(status, marker=dict(status["marker"], closed_windows=previous["closed_windows"]))
+    return render_markdown(status)
 
 
 def monitor_notify(*, status_path: Path, previous_body: str | None,

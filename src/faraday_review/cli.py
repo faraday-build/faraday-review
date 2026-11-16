@@ -65,6 +65,7 @@ from .telemetry.monitor import (
     EXIT_CRITICAL,
     MonitorError,
     monitor_notify,
+    next_body,
     monitor_report,
 )
 from .telemetry.qualification_v5 import qualification_v5
@@ -804,6 +805,13 @@ def _cmd_monitor_notify(args) -> int:
         target.unlink()
     if comment is not None:
         target.write_text(comment, encoding="utf-8")
+    if args.body_output:
+        try:
+            body = next_body(status_path=Path(args.status), previous_body=previous, repository=args.repository)
+        except MonitorError as exc:
+            print(f"monitor-notify: {exc.reason}: {exc}", file=sys.stderr)
+            return 2
+        Path(args.body_output).write_text(body, encoding="utf-8")
     print(f"monitor-notify: comment={'yes' if comment else 'no'} "
           f"reasons={','.join(reasons) or 'none'}", file=sys.stderr)
     return 0
@@ -966,6 +974,8 @@ def main(argv: list[str] | None = None) -> int:
     ntf.add_argument("--previous-body", default=None,
                      help="current issue body; omit when the issue does not exist yet")
     ntf.add_argument("--comment-output", required=True)
+    ntf.add_argument("--body-output", default=None,
+                     help="write the issue body for this run (carries the sampling-window baseline forward)")
 
     args = parser.parse_args(argv)
     if args.command == "monitor-report":
