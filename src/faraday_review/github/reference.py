@@ -208,7 +208,21 @@ def _required_checks(client: GitHubClient, repo: str, base_ref: str, head: str) 
                                    {"check_name": context, "filter": "latest"})
         runs = [r for r in runs if r.get("name") == context and r.get("head_sha") == head
                 and (app_id is None or (r.get("app") or {}).get("id") == app_id)]
-        latest = max(runs, key=lambda r: (str(r.get("started_at") or ""), int(r["id"])), default=None)
+        # A rerun supersedes earlier attempts only within its own check
+        # suite (one per workflow run). Same-named runs from independent
+        # suites (two workflows reusing a job name) must all pass, so the
+        # latest run of every suite is evaluated conjunctively (Codex P2, #22).
+        by_suite: dict[Any, dict[str, Any]] = {}
+        for r in runs:
+            suite = (r.get("check_suite") or {}).get("id")
+            key = ("suite", int(suite)) if suite is not None else ("run", int(r["id"]))
+            rank = (str(r.get("started_at") or ""), int(r["id"]))
+            if key not in by_suite or rank > (str(by_suite[key].get("started_at") or ""),
+                                              int(by_suite[key]["id"])):
+                by_suite[key] = r
+        heads_of_suites = sorted(by_suite.values(), key=lambda r: (str(r.get("started_at") or ""), int(r["id"])))
+        failing = [r for r in heads_of_suites if r.get("conclusion") != "success"]
+        latest = (failing[-1] if failing else heads_of_suites[-1]) if heads_of_suites else None
         conclusion = latest.get("conclusion") if latest else None
         source = "check_run" if latest else None
         if app_id is None and context in statuses:
