@@ -15,6 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -301,11 +302,62 @@ def test_v5_step_is_wall_clock_bounded_and_reserves_time_for_v4():
     import re
     step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
     run = step["run"]
-    bounds = []
-    for cmd in ("faraday-review reference", "faraday-review qualification-v5"):
-        m = re.search(r"timeout -k (\d+) (\d+) " + re.escape(cmd), run)
-        assert m, f"{cmd} must run under timeout"
-        bounds.append(int(m.group(1)) + int(m.group(2)))
-    job_minutes = _jobs()["monitor"]["timeout-minutes"]
-    assert sum(bounds) <= (job_minutes - 15) * 60, "at least 15 minutes must remain for v4"
+    assert re.search(r'timeout -k 30 "\$ref_budget" faraday-review reference', run)
+    assert re.search(r"timeout -k 30 120 faraday-review qualification-v5", run)
     assert "continue-on-error" not in step
+
+
+def test_v5_budget_is_relative_to_the_job_deadline():
+    """Codex P2 (#24): the reference budget is computed from the recorded
+    job start, the job timeout and a v4 reserve, capped, and the step is
+    skipped (v5 reported unavailable) when too little time remains."""
+    import re
+    job = _jobs()["monitor"]
+    first = _steps("monitor")[0]["run"]
+    assert 'date -u +%s > "$RUNNER_TEMP/faraday-monitor-job-start"' in first
+    step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
+    env, run = step["env"], step["run"]
+    assert int(env["JOB_TIMEOUT_SECONDS"]) == job["timeout-minutes"] * 60
+    assert int(env["V4_RESERVE_SECONDS"]) >= 300
+    assert "start + JOB_TIMEOUT_SECONDS - V4_RESERVE_SECONDS - $(date -u +%s)" in run
+    assert re.search(r'\[ "\$ref_budget" -gt 600 \] && ref_budget=600', run)
+    assert 'state=skipped' in run and '-lt 60' in run
+    report = _steps("monitor")[_index("monitor", "Qualification status report")]["run"]
+    assert "--qualification-v5-unavailable job_budget_exhausted" in report
+
+
+@pytest.mark.parametrize("elapsed,expect", [(60, "600"), (1200, "120"), (1300, "skipped"), (1700, "skipped")])
+def test_v5_budget_behaviour(tmp_path, elapsed, expect):
+    """Execute the step's budget lines in bash: the reference bound shrinks
+    with elapsed job time and the step is skipped near the deadline."""
+    import subprocess
+    import time
+    step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
+    run = step["run"]
+    start_i = run.index("start=$(cat")
+    end_i = run.index("if timeout -k 30")
+    snippet = run[start_i:end_i] + 'echo "budget=$ref_budget"\n'
+    (tmp_path / "faraday-monitor-job-start").write_text(str(int(time.time()) - elapsed))
+    out = tmp_path / "out.txt"
+    env = {"RUNNER_TEMP": str(tmp_path), "GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin",
+           **{k: str(v) for k, v in step["env"].items() if k in ("JOB_TIMEOUT_SECONDS", "V4_RESERVE_SECONDS")}}
+    res = subprocess.run(["bash", "-c", "set -uo pipefail\n" + snippet], env=env, capture_output=True, text=True)
+    if expect == "skipped":
+        assert "state=skipped" in out.read_text()
+    else:
+        assert f"budget={expect}" in res.stdout or abs(int(res.stdout.split("budget=")[1]) - int(expect)) <= 2
+
+
+@pytest.mark.parametrize("state,expect", [
+    ("available", "--qualification-v5 /w/out/qualification-v5.json"),
+    ("skipped", "--qualification-v5-unavailable job_budget_exhausted"),
+    ("unavailable", "--qualification-v5-unavailable reference_step_failed"),
+    ("", "--qualification-v5-unavailable reference_step_failed")])
+def test_report_maps_v5_state_to_arguments(state, expect):
+    report = _steps("monitor")[_index("monitor", "Qualification status report")]["run"]
+    start = report.index('if [ "$V5_STATE" = "available" ]')
+    end = report.index("fi\n", start) + 3
+    snippet = report[start:end] + 'echo "${v5[@]}"\n'
+    res = subprocess.run(["bash", "-c", snippet], env={"V5_STATE": state, "W": "/w", "PATH": "/usr/bin:/bin"},
+                         capture_output=True, text=True)
+    assert res.stdout.strip() == expect

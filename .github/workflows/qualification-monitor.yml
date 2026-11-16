@@ -70,6 +70,9 @@ jobs:
           STALL_HOURS: ${{ inputs.stall_hours }}
         run: |
           set -euo pipefail
+          # Job start, for the optional v5 step's remaining-time budget
+          # (Codex P2, #24).
+          date -u +%s > "$RUNNER_TEMP/faraday-monitor-job-start"
           case "$EVENT_NAME" in
             schedule|workflow_dispatch) ;;
             *) echo "::error::the qualification monitor supports only schedule and workflow_dispatch (got '$EVENT_NAME')."; exit 2 ;;
@@ -203,16 +206,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           MAX_REQUESTS: ${{ inputs.max_requests }}
+          # Must equal this job's timeout-minutes x 60 (guard-tested).
+          JOB_TIMEOUT_SECONDS: "1800"
+          V4_RESERVE_SECONDS: "300"
         run: |
           set -uo pipefail
           W="$RUNNER_TEMP/faraday-monitor"
           now=$(cat "$W/now.txt")
-          # Wall-clock bounds (Codex P2 r2, #20): a slow or rate-limited
-          # reference collection (Retry-After backoff) is killed and routed
-          # to the unavailable fallback, reserving the rest of the 30-minute
-          # job for the v4 status report. 600 s + 120 s, each with a 30 s
-          # kill grace, leaves at least 16 minutes for v4.
-          if timeout -k 30 600 faraday-review reference --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
+          # Wall-clock bounds relative to the job deadline (Codex P2 r2 #20,
+          # P2 #24): the reference budget is what remains of the job after
+          # the v4 reserve and the v5 bound (120 s + 2 x 30 s kill grace),
+          # capped at 600 s. Below 60 s the step is skipped, so slow earlier
+          # steps or a rate-limited collection can never stop the v4 report.
+          start=$(cat "$RUNNER_TEMP/faraday-monitor-job-start" 2>/dev/null || echo 0)
+          remaining=$(( start + JOB_TIMEOUT_SECONDS - V4_RESERVE_SECONDS - $(date -u +%s) ))
+          ref_budget=$(( remaining - 180 ))
+          [ "$ref_budget" -gt 600 ] && ref_budget=600
+          if [ "$start" -le 0 ] || [ "$ref_budget" -lt 60 ]; then
+            echo "::warning::QA-1 reference/v5 step skipped: job time budget exhausted; the v4 qualification status is unaffected."
+            echo "state=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if timeout -k 30 "$ref_budget" faraday-review reference --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
                --enrollment "$W/enrollment.json" --collected-at "$now" --max-requests "$MAX_REQUESTS" \
                --output "$W/out/reference.json" \
              && timeout -k 30 120 faraday-review qualification-v5 --readiness "$W/out/readiness.json" \
@@ -237,6 +252,8 @@ jobs:
           now=$(cat "$W/now.txt")
           if [ "$V5_STATE" = "available" ]; then
             v5=(--qualification-v5 "$W/out/qualification-v5.json")
+          elif [ "$V5_STATE" = "skipped" ]; then
+            v5=(--qualification-v5-unavailable job_budget_exhausted)
           else
             v5=(--qualification-v5-unavailable reference_step_failed)
           fi
