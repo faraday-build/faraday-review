@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/local/qualification-v5.schema.json",
+  "title": "QualificationV5",
+  "description": "QA-1 proposed qualification gate (`faraday-review qualification-v5`). Never authoritative while `adopted` is false; the v4 readiness gate is unchanged. Qualification evidence only: it authorizes nothing, and reference verdicts are never founder adjudications.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "generated_at", "status", "authoritative", "adopted", "note", "criterion", "threshold",
+               "evidence", "reference_policy", "counts", "gate", "windows", "founder_queue",
+               "mandatory_escalations_by_tier", "confirmed_material_disagreements", "prs"],
+  "properties": {
+    "format": { "const": "faraday-review/qualification-v5/v1" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "status": { "const": "proposed" },
+    "authoritative": { "const": false },
+    "adopted": { "const": false },
+    "note": { "type": "string" },
+    "criterion": { "type": "string" },
+    "threshold": { "type": "integer", "minimum": 20 },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    },
+    "reference_policy": { "type": "object" },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["qualifying", "reference_unknown", "exception_open", "sample_pending", "window_open",
+                   "verified", "verified_green"],
+      "properties": {
+        "qualifying": { "type": "integer", "minimum": 0 },
+        "reference_unknown": { "type": "integer", "minimum": 0 },
+        "exception_open": { "type": "integer", "minimum": 0 },
+        "sample_pending": { "type": "integer", "minimum": 0 },
+        "window_open": { "type": "integer", "minimum": 0 },
+        "verified": { "type": "integer", "minimum": 0 },
+        "verified_green": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["met", "conditions"],
+      "properties": {
+        "met": { "type": "boolean" },
+        "conditions": { "type": "object" }
+      }
+    },
+    "windows": { "type": "array", "items": { "type": "object" } },
+    "founder_queue": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "pr_number", "head_sha", "reasons", "action"],
+        "properties": {
+          "repository": { "type": "string" },
+          "pr_number": { "type": "integer" },
+          "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "reasons": { "type": "array", "items": { "enum": ["X1", "X2", "X3", "X4", "sample"] } },
+          "action": { "type": "string" }
+        }
+      }
+    },
+    "mandatory_escalations_by_tier": { "type": "array", "items": { "type": "object" } },
+    "confirmed_material_disagreements": { "type": "array", "items": { "type": "object" } },
+    "prs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "pr_number", "head_sha", "faraday_class", "escalated", "reference",
+                     "exceptions", "window", "sampled", "founder_answer", "truth_review_needed", "verification"],
+        "properties": {
+          "repository": { "type": "string" },
+          "pr_number": { "type": "integer" },
+          "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "faraday_class": { "enum": ["green", "yellow", "red", "block"] },
+          "escalated": { "type": ["boolean", "null"] },
+          "reference": { "type": "object", "required": ["status"] },
+          "exceptions": { "type": "array", "items": { "enum": ["X1", "X2", "X3", "X4"] } },
+          "window": { "type": ["integer", "null"] },
+          "sampled": { "type": "boolean" },
+          "founder_answer": { "type": "object", "required": ["status", "class", "labeled_at"] },
+          "truth_review_needed": { "type": ["boolean", "null"] },
+          "verification": { "enum": ["reference_unknown", "exception_open", "sample_pending", "window_open",
+                                     "verified"] }
+        }
+      }
+    }
+  }
+}
