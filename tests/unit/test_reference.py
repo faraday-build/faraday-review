@@ -373,6 +373,30 @@ def test_rerun_within_one_suite_supersedes_the_earlier_attempt(monkeypatch, tmp_
     assert rc["status"] == "success" and rc["contexts"][0]["check_run_id"] == 6
 
 
+class SuiteCount(Api):
+    def __init__(self, total):
+        super().__init__()
+        self.total = total
+
+    @property
+    def routes(self):
+        routes = dict(super().routes)
+        body = routes[f"/repos/{REPO}/commits/{HEAD}/check-suites"][1]
+        routes[f"/repos/{REPO}/commits/{HEAD}/check-suites"] = (200, dict(body, total_count=self.total)
+                                                               if self.total is not None
+                                                               else {"check_suites": body["check_suites"]})
+        return routes
+
+
+@pytest.mark.parametrize("total,status,reason", [(1000, "success", None), (1001, "unknown", "check_suites_capped"),
+                                                 (None, "unknown", "check_suites_count_unknown")])
+def test_check_suite_listing_cap_fails_closed(monkeypatch, tmp_path, total, status, reason):
+    """Codex P2 (#22): beyond 1,000 check suites the check-runs listing can
+    omit an older failing suite, so required checks become unknown."""
+    rc = only(run(monkeypatch, tmp_path, SuiteCount(total))[1])["required_checks"]
+    assert rc["status"] == status and rc.get("reason") == reason
+
+
 class PagedStatuses(Api):
     """Combined status split over two pages, the required context on page 2."""
 
