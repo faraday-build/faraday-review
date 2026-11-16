@@ -346,6 +346,33 @@ def test_same_named_check_run_and_status_are_conjunctive(monkeypatch, tmp_path, 
     assert rc["contexts"][0]["evidence_kind"] == "check_run+status"
 
 
+@pytest.mark.parametrize("second,status", [("success", "not_success"), ("failure", "not_success")])
+def test_same_named_runs_from_independent_suites_are_conjunctive(monkeypatch, tmp_path, second, status):
+    """Codex P2 (#22): a failing `required-checks` from one workflow is not
+    hidden by a later successful same-named run from another workflow."""
+    api = Api()
+    api.check_runs = [
+        {"id": 5, "name": "required-checks", "head_sha": HEAD, "app": {"id": APP}, "conclusion": "failure",
+         "started_at": "2026-11-15T06:20:00Z", "check_suite": {"id": 71}},
+        {"id": 6, "name": "required-checks", "head_sha": HEAD, "app": {"id": APP}, "conclusion": "success",
+         "started_at": "2026-11-15T06:25:00Z", "check_suite": {"id": 72}}]
+    if second == "failure":
+        api.check_runs[0]["conclusion"], api.check_runs[1]["conclusion"] = "success", "failure"
+    rc = only(run(monkeypatch, tmp_path, api)[1])["required_checks"]
+    assert rc["status"] == status
+
+
+def test_rerun_within_one_suite_supersedes_the_earlier_attempt(monkeypatch, tmp_path):
+    api = Api()
+    api.check_runs = [
+        {"id": 5, "name": "required-checks", "head_sha": HEAD, "app": {"id": APP}, "conclusion": "failure",
+         "started_at": "2026-11-15T06:20:00Z", "check_suite": {"id": 71}},
+        {"id": 6, "name": "required-checks", "head_sha": HEAD, "app": {"id": APP}, "conclusion": "success",
+         "started_at": "2026-11-15T06:25:00Z", "check_suite": {"id": 71}}]
+    rc = only(run(monkeypatch, tmp_path, api)[1])["required_checks"]
+    assert rc["status"] == "success" and rc["contexts"][0]["check_run_id"] == 6
+
+
 class PagedStatuses(Api):
     """Combined status split over two pages, the required context on page 2."""
 
