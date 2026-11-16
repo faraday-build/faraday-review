@@ -169,6 +169,7 @@ def _codex(client: GitHubClient, repo: str, n: int, head: str, first_head: str) 
 CHECK_SUITE_LISTING_CAP = 1000
 # GitHub: a pull request's commit list returns at most 250 commits.
 PR_COMMIT_LISTING_CAP = 250
+_REVERTS_RE = re.compile(r"This reverts commit ([0-9a-f]{40})")
 
 
 def _required_checks(client: GitHubClient, repo: str, base_ref: str, head: str) -> dict[str, Any]:
@@ -279,8 +280,23 @@ def _outcome(client: GitHubClient, repo: str, n: int, pr: dict[str, Any], head: 
     commits = client.paginate(f"/repos/{repo}/commits",
                               {"sha": pr["base"]["ref"], "since": _iso(merged_at), "until": _iso(until)})
     pr_ref = f"reverts {repo.casefold()}#{n}"
+    introduced: dict[str, bool] = {}
+
+    def from_this_pr(sha: str) -> bool:
+        # A rebase merge lands NEW commit SHAs on the base, of which only the
+        # last is merge_commit_sha. A revert naming any other commit is
+        # attributed by asking GitHub which merged PR introduced it
+        # (Codex P2, #22).
+        if sha in shas:
+            return True
+        if sha not in introduced:
+            prs = client.get_json(f"/repos/{repo}/commits/{sha}/pulls")
+            introduced[sha] = isinstance(prs, list) and any(
+                isinstance(p, dict) and p.get("number") == n for p in prs)
+        return introduced[sha]
+
     reverts = sorted(str(c["sha"]) for c in commits
-                     if any(f"This reverts commit {s}" in str(c["commit"]["message"]) for s in shas)
+                     if any(from_this_pr(s) for s in _REVERTS_RE.findall(str(c["commit"]["message"])))
                      or re.search(rf"(?<![\w/.-]){re.escape(pr_ref)}(?!\d)",
                                   str(c["commit"]["message"]).casefold()))
     if reverts:
