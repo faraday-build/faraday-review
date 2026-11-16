@@ -167,6 +167,8 @@ def _codex(client: GitHubClient, repo: str, n: int, head: str, first_head: str) 
 
 # GitHub: check runs are listed for at most the 1,000 most recent suites of a ref.
 CHECK_SUITE_LISTING_CAP = 1000
+# GitHub: a pull request's commit list returns at most 250 commits.
+PR_COMMIT_LISTING_CAP = 250
 
 
 def _required_checks(client: GitHubClient, repo: str, base_ref: str, head: str) -> dict[str, Any]:
@@ -264,8 +266,16 @@ def _outcome(client: GitHubClient, repo: str, n: int, pr: dict[str, Any], head: 
     now = _ts(collected_at)
     until = min(window_end, now)
     shas = {str(pr.get("merge_commit_sha") or ""), head}
-    shas |= {str(c["sha"]) for c in client.paginate(f"/repos/{repo}/pulls/{n}/commits")}
+    listed = client.paginate(f"/repos/{repo}/pulls/{n}/commits")
+    shas |= {str(c["sha"]) for c in listed}
     shas.discard("")
+    # GitHub lists at most 250 commits of a PR, pagination included. When the
+    # PR's commit count is absent, above the cap, or larger than what was
+    # listed, a revert of an omitted commit could be missed, so the outcome
+    # may be adverse but never clear or pending (Codex P2, #22).
+    count = pr.get("commits")
+    complete = (isinstance(count, int) and not isinstance(count, bool)
+                and count <= PR_COMMIT_LISTING_CAP and len(listed) >= count)
     commits = client.paginate(f"/repos/{repo}/commits",
                               {"sha": pr["base"]["ref"], "since": _iso(merged_at), "until": _iso(until)})
     pr_ref = f"reverts {repo.casefold()}#{n}"
@@ -275,6 +285,9 @@ def _outcome(client: GitHubClient, repo: str, n: int, pr: dict[str, Any], head: 
                                   str(c["commit"]["message"]).casefold()))
     if reverts:
         status = "adverse"
+    elif not complete:
+        return {"status": "incomplete", "reason": "pr_commits_truncated", "window_days": OUTCOME_WINDOW_DAYS,
+                "merged_at": _iso(merged_at), "window_end": _iso(window_end), "reverts": []}
     elif now < window_end:
         status = "pending"
     else:
