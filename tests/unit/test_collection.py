@@ -590,7 +590,9 @@ def test_private_metadata_never_lands_in_public_archive(monkeypatch, tmp_path, r
 # founder-authorized after S6 GO, 2026-11-15).
 REVIEWED_ENROLLMENT = [
     {"repository": "tomrivera-ops/ecosystem-audit", "visibility": "public",
-     "workflow": ".github/workflows/faraday-review.yml", "enrolled_from": "2026-11-15"},
+     "workflow": ".github/workflows/faraday-review.yml", "enrolled_from": "2026-11-15",
+     # QA-1 (Q2): not production / deploy / customer data / money (ADR-0014 §3).
+     "repository_floor": "A0"},
 ]
 
 

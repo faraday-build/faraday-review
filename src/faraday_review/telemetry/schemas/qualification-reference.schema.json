@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faraday-lab.dev/schemas/local/qualification-reference.schema.json",
+  "title": "QualificationReference",
+  "description": "QA-1 independent reference evidence (`faraday-review reference`), re-derived read-only from GitHub at each real PR's exact ledger head. Qualification evidence only: it authorizes nothing and is never a founder adjudication.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "collected_at", "reference_policy", "outcome_window_days", "prs"],
+  "properties": {
+    "format": { "const": "faraday-review/qualification-reference/v1" },
+    "collected_at": { "type": "string", "format": "date-time" },
+    "outcome_window_days": { "type": "integer", "minimum": 14 },
+    "reference_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256", "status"],
+      "description": "The vendored reference path tiers, by content digest only (no source repository or commit).",
+      "properties": {
+        "name": { "const": "adr-0014-reference-path-tiers" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "status": { "const": "proposed" }
+      }
+    },
+    "prs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["repository", "pr_number", "head_sha", "first_head_sha", "heads", "live", "exact_head",
+                     "path_tier", "codex", "required_checks", "outcome", "founder_label_events"],
+        "properties": {
+          "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+          "pr_number": { "type": "integer", "minimum": 1 },
+          "head_sha": { "$ref": "#/$defs/sha" },
+          "first_head_sha": { "$ref": "#/$defs/sha" },
+          "heads": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["head_sha", "first_created_at", "first_suite_at"],
+              "properties": {
+                "head_sha": { "$ref": "#/$defs/sha" },
+                "first_created_at": { "type": ["string", "null"] },
+                "first_suite_at": { "type": ["string", "null"], "description": "Earliest check-suite creation for this commit (GitHub, on push): head-transition evidence." }
+              }
+            }
+          },
+          "exact_head": { "type": "boolean" },
+          "live": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["state", "merged", "draft", "head_sha", "base_ref", "merged_at", "merge_commit_sha"],
+            "properties": {
+              "state": { "enum": ["open", "closed"] },
+              "merged": { "type": "boolean" },
+              "draft": { "type": "boolean" },
+              "head_sha": { "$ref": "#/$defs/sha" },
+              "base_ref": { "type": "string" },
+              "merged_at": { "type": ["string", "null"] },
+              "merge_commit_sha": { "type": ["string", "null"] }
+            }
+          },
+          "path_tier": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "tier", "floor", "paths", "path_tier_counts"],
+            "properties": {
+              "status": { "enum": ["complete", "incomplete", "head_moved"] },
+              "tier": { "enum": ["A0", "A1", "A2", "A3", "A4", "unknown"] },
+              "floor": { "enum": ["A0", "A3", "unknown"] },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "path_tier_counts": {
+                "type": "object",
+                "additionalProperties": { "type": "integer", "minimum": 0 }
+              }
+            }
+          },
+          "codex": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "receipt_ids", "findings", "first_head_receipt_id"],
+            "properties": {
+              "status": { "enum": ["clean", "findings", "absent"] },
+              "receipt_ids": { "type": "array", "items": { "type": "integer" } },
+              "first_head_receipt_id": { "type": ["integer", "null"] },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "severity"],
+                  "properties": {
+                    "id": { "type": "integer" },
+                    "severity": { "enum": ["P0", "P1", "P2", "P3", "unrated"] }
+                  }
+                }
+              }
+            }
+          },
+          "required_checks": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "contexts"],
+            "properties": {
+              "status": { "enum": ["success", "not_success", "unknown"] },
+              "reason": { "type": "string" },
+              "contexts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["context", "app_id", "conclusion", "check_run_id", "evidence_kind"],
+                  "properties": {
+                    "evidence_kind": { "enum": ["check_run", "status", null] },
+                    "context": { "type": "string" },
+                    "app_id": { "type": ["integer", "null"] },
+                    "conclusion": { "type": ["string", "null"] },
+                    "check_run_id": { "type": ["integer", "null"] }
+                  }
+                }
+              }
+            }
+          },
+          "outcome": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "window_days", "reverts"],
+            "properties": {
+              "status": { "enum": ["not_merged", "pending", "clear", "adverse"] },
+              "window_days": { "type": "integer" },
+              "merged_at": { "type": "string" },
+              "window_end": { "type": "string" },
+              "reverts": { "type": "array", "items": { "$ref": "#/$defs/sha" } }
+            }
+          },
+          "founder_label_events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["event", "label", "actor_node_id", "created_at", "id"],
+              "properties": {
+                "event": { "enum": ["labeled", "unlabeled"] },
+                "label": { "type": "string", "pattern": "^faraday/founder-" },
+                "actor_node_id": { "type": "string" },
+                "created_at": { "type": "string" },
+                "id": { "type": "integer" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "files": {
+    "reference-path-tiers.json": "5232463d11a9b89fcb217819fc6cba0aa8ff449ac53cd227787e5bfbe5767fc7",
+    "reference-tier-vectors.json": "45573d84cb1d7148656ab1de0894e249138cda6d8dabc289ff98652e55878eb2"
+  },
+  "source": "tomrivera-ops/agent-contracts",
+  "source_commit": "b4a4b034462921e8cfa1c29ad9fb51f16cc918f2",
+  "status": "proposed"
+}

@@ -40,6 +40,7 @@ from .github.client import GitHubClient
 from .github.collection import CollectionError, check_public_destination, collect, load_enrollment
 from .github.preflight import RELEASED_POLICY_DIGEST, preflight
 from .github.pr_context import collect_context, fetch_head_sha
+from .github.reference import collect_reference
 from .github.publisher import publish_attempt_record, publish_check_run, publish_summary_comment
 from .github.secrets import collect_secret_alerts
 from .evidence.schema_validation import validation_errors
@@ -66,6 +67,7 @@ from .telemetry.monitor import (
     monitor_notify,
     monitor_report,
 )
+from .telemetry.reference_tier import ReferencePolicyError
 from .telemetry.throughput import compute_throughput
 from .telemetry.writer import append_event, read_events
 
@@ -624,6 +626,34 @@ def _cmd_collect(args) -> int:
     return 0
 
 
+def _cmd_reference(args) -> int:
+    """QA-1 reference evidence for every real PR of a ledger (read-only API).
+    Qualification evidence only; authorizes nothing."""
+    try:
+        ledger = json.loads(Path(args.ledger).read_text(encoding="utf-8"))
+        synthetic = json.loads(Path(args.synthetic).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"reference: cannot read inputs: {exc}", file=sys.stderr)
+        return 2
+    client = _read_only_client(args, "reference")
+    if client is None:
+        return 2
+    try:
+        enrollment = load_enrollment(Path(args.enrollment))
+        document = collect_reference(client, ledger, synthetic, enrollment,
+                                     collected_at=args.collected_at)
+    except (FaradayReviewError, QualificationError, ReferencePolicyError, KeyError, TypeError,
+            ValueError) as exc:
+        print(f"reference: {getattr(exc, 'reason', 'invalid_input')}: {exc}", file=sys.stderr)
+        return 2
+    code = _write_validated(Path(args.output), document, "qualification-reference", "reference",
+                            enrollment=args.enrollment, public_check=True)
+    if code == 0:
+        print(f"reference: prs={len(document['prs'])} requests={client.budget.requests_used}",
+              file=sys.stderr)
+    return code
+
+
 def _cmd_preflight(args) -> int:
     """Read-only activation checks; exit 1 listing every gap."""
     if not _REPOSITORY_RE.match(args.repo):
@@ -824,6 +854,16 @@ def main(argv: list[str] | None = None) -> int:
     col.add_argument("--token-env", default="GITHUB_TOKEN")
     col.add_argument("--max-requests", type=_positive_int, default=5000)
 
+    ref = sub.add_parser("reference",
+                         help="QA-1 independent reference evidence per real PR (read-only API)")
+    ref.add_argument("--ledger", required=True)
+    ref.add_argument("--synthetic", required=True)
+    ref.add_argument("--enrollment", default="docs/qualification/enrollment.json")
+    ref.add_argument("--collected-at", required=True, help="explicit ISO-8601 timestamp; no clock is read")
+    ref.add_argument("--output", required=True)
+    ref.add_argument("--token-env", default="GITHUB_TOKEN")
+    ref.add_argument("--max-requests", type=_positive_int, default=2000)
+
     pre = sub.add_parser("preflight", help="read-only activation checks for one caller repo")
     pre.add_argument("--repo", required=True)
     pre.add_argument("--workflow", default=".github/workflows/faraday-review.yml")
@@ -905,6 +945,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_collect(args)
     if args.command == "preflight":
         return _cmd_preflight(args)
+    if args.command == "reference":
+        return _cmd_reference(args)
     if args.command == "throughput":
         metrics = compute_throughput(list(read_events(Path(args.artifacts_dir))))
         write_canonical(Path(args.artifacts_dir) / "throughput.json", metrics)
