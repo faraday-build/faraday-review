@@ -136,11 +136,15 @@ def _arrival(ledger: dict[str, Any], repository: str, pr: int) -> str:
 
 
 def _ledger_points(ledger: dict[str, Any], repository: str, pr: int) -> list[tuple[str, str]]:
-    """(created_at, head_sha) of every recorded occurrence of the PR: the PR's
-    own head history as the ledger saw it."""
+    """(created_at, head_sha) of every FRESH recorded occurrence of the PR: its
+    head history as the ledger saw it while each head was current. A stale
+    rerun on an old head (stale_state other than "fresh") is not a head
+    transition and never ends the current head's tenure, the same rule
+    readiness uses to select the current head (D3-1, Codex P2 #23)."""
     return [(str(occ["created_at"]), str(entry["head_sha"])) for entry in ledger["entries"]
             if _key(entry["repository"], entry["pr_number"]) == _key(repository, pr)
-            for run in entry["runs"] for occ in run["occurrence_log"] if occ.get("created_at")]
+            for run in entry["runs"] for occ in run["occurrence_log"]
+            if occ.get("created_at") and occ.get("stale_state") == "fresh"]
 
 
 def _first_head(ledger: dict[str, Any], repository: str, pr: int) -> str | None:
@@ -185,31 +189,44 @@ def _intervals(ref: dict[str, Any], head: str,
 
 def founder_answer(ref: dict[str, Any], head: str, founder_node_id: str,
                    points: list[tuple[str, str]] = ()) -> dict[str, Any]:
+    """The founder's classification for `head` (D3-1 head-specific
+    adjudication-period model).
+
+    1. Replay EVERY founder `faraday/founder-<class>` label event, applications
+       and removals on any head, in chronological order (then event id), to get
+       the labels present now with each one's latest application time.
+    2. More than one class present: `ambiguous` (fail closed; the founder
+       removes the stale label).
+    3. Exactly one class present: `answered` only if its latest application
+       falls inside an adjudication period (tenure interval) of `head`;
+       otherwise `none`. A label applied while another head was current never
+       answers for this head.
+    Non-founder and unknown-class events never count. A head without any
+    datable tenure has no answer."""
     intervals = _intervals(ref, head, points)
-    if not intervals:
-        return {"status": "none", "class": None, "labeled_at": None}
+    events = sorted(ref["founder_label_events"],
+                    key=lambda ev: (_sort_key_ts(ev["created_at"]), int(ev.get("id") or 0)))
     present: dict[str, str] = {}
     ignored = 0
-    for ev in ref["founder_label_events"]:
+    for ev in events:
         if ev["actor_node_id"] != founder_node_id:
             ignored += 1
-            continue
-        at = _sort_key_ts(ev["created_at"])
-        if not any(start <= at and (end is None or at < end) for start, end in intervals):
             continue
         cls = ev["label"].removeprefix(LABEL_PREFIX)
         if cls not in CLASS_ORDER:
             continue
         if ev["event"] == "labeled":
             present[cls] = ev["created_at"]
-        else:
+        elif ev["event"] == "unlabeled":
             present.pop(cls, None)
     out: dict[str, Any] = {"status": "none", "class": None, "labeled_at": None}
-    if len(present) == 1:
-        (cls, at), = present.items()
-        out = {"status": "answered", "class": cls, "labeled_at": at}
-    elif len(present) > 1:
+    if len(present) > 1:
         out = {"status": "ambiguous", "class": None, "labeled_at": None}
+    elif len(present) == 1 and intervals:
+        (cls, at), = present.items()
+        key = _sort_key_ts(at)
+        if any(start <= key and (end is None or key < end) for start, end in intervals):
+            out = {"status": "answered", "class": cls, "labeled_at": at}
     if ignored:
         out["non_founder_label_events"] = ignored
     return out
