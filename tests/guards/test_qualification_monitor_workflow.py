@@ -15,6 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -260,3 +261,154 @@ def test_hardening_guard_still_rejects_issues_write_elsewhere(tmp_path):
     proc = subprocess.run([sys.executable, str(ROOT / "tools/guards/workflow_hardening.py"), str(wf)],
                           capture_output=True, text=True)
     assert proc.returncode == 1
+
+
+# QA-1 (GHO-AUTONOMOUS-PRODUCTION-011, Q4): the proposed v5 step is
+# read-only, non-blocking, and can never stop or alter the v4 status.
+
+def test_v5_step_sits_between_readiness_and_report():
+    order = [_index("monitor", n) for n in ("Aggregate and readiness",
+                                            "QA-1 reference and proposed v5 gate (non-blocking)",
+                                            "Qualification status report")]
+    assert order == sorted(order)
+
+
+def test_v5_step_is_non_blocking_and_cleans_up_on_failure():
+    step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
+    run = step["run"]
+    assert step["id"] == "v5"
+    assert "set -uo pipefail" in run and "set -e" not in run.replace("set -euo", "")
+    assert "faraday-review reference" in run and "faraday-review qualification-v5" in run
+    assert 'rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"' in run
+    assert 'echo "state=unavailable" >> "$GITHUB_OUTPUT"' in run
+    assert step["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+    assert '--enrollment "$W/enrollment.json"' in run
+    assert "${{" not in run
+
+
+def test_report_consumes_v5_via_env_and_drops_rejected_reports():
+    step = _steps("monitor")[_index("monitor", "Qualification status report")]
+    assert step["env"]["V5_STATE"] == "${{ steps.v5.outputs.state }}"
+    run = step["run"]
+    assert '--qualification-v5-unavailable reference_step_failed' in run
+    assert '"${v5[@]}"' in run
+    assert run.index('rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"') < run.index('case "$rc" in')
+
+
+def test_v5_step_is_wall_clock_bounded_and_reserves_time_for_v4():
+    """Codex P2 r2 (#20): the optional reference/v5 commands run under
+    `timeout`, so a slow or rate-limited collection cannot exhaust the
+    job timeout before the v4 status report runs."""
+    import re
+    step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
+    run = step["run"]
+    assert re.search(r'timeout -k 30 "\$ref_budget" faraday-review reference', run)
+    assert re.search(r"timeout -k 30 120 faraday-review qualification-v5", run)
+    assert "continue-on-error" not in step
+
+
+def test_v5_budget_is_relative_to_the_job_deadline():
+    """Codex P2 (#24): the reference budget is computed from the recorded
+    job start, the job timeout and a v4 reserve, capped, and the step is
+    skipped (v5 reported unavailable) when too little time remains."""
+    import re
+    job = _jobs()["monitor"]
+    first = _steps("monitor")[0]["run"]
+    assert 'date -u +%s > "$RUNNER_TEMP/faraday-monitor-job-start"' in first
+    step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
+    env, run = step["env"], step["run"]
+    assert int(env["JOB_TIMEOUT_SECONDS"]) == job["timeout-minutes"] * 60
+    assert int(env["V4_RESERVE_SECONDS"]) >= 300
+    assert "start + JOB_TIMEOUT_SECONDS - V4_RESERVE_SECONDS - $(date -u +%s)" in run
+    assert re.search(r'\[ "\$ref_budget" -gt 600 \] && ref_budget=600', run)
+    assert 'state=skipped' in run and '-lt 60' in run
+    report = _steps("monitor")[_index("monitor", "Qualification status report")]["run"]
+    assert "--qualification-v5-unavailable job_budget_exhausted" in report
+
+
+@pytest.mark.parametrize("elapsed,expect", [(60, "600"), (1200, "120"), (1300, "skipped"), (1700, "skipped")])
+def test_v5_budget_behaviour(tmp_path, elapsed, expect):
+    """Execute the step's budget lines in bash: the reference bound shrinks
+    with elapsed job time and the step is skipped near the deadline."""
+    import subprocess
+    import time
+    step = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]
+    run = step["run"]
+    start_i = run.index("start=$(cat")
+    end_i = run.index("if timeout -k 30")
+    snippet = run[start_i:end_i] + 'echo "budget=$ref_budget"\n'
+    (tmp_path / "faraday-monitor-job-start").write_text(str(int(time.time()) - elapsed))
+    out = tmp_path / "out.txt"
+    env = {"RUNNER_TEMP": str(tmp_path), "GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin",
+           **{k: str(v) for k, v in step["env"].items() if k in ("JOB_TIMEOUT_SECONDS", "V4_RESERVE_SECONDS")}}
+    res = subprocess.run(["bash", "-c", "set -uo pipefail\n" + snippet], env=env, capture_output=True, text=True)
+    if expect == "skipped":
+        assert "state=skipped" in out.read_text()
+    else:
+        assert f"budget={expect}" in res.stdout or abs(int(res.stdout.split("budget=")[1]) - int(expect)) <= 2
+
+
+@pytest.mark.parametrize("state,expect", [
+    ("available", "--qualification-v5 /w/out/qualification-v5.json"),
+    ("skipped", "--qualification-v5-unavailable job_budget_exhausted"),
+    ("unavailable", "--qualification-v5-unavailable reference_step_failed"),
+    ("", "--qualification-v5-unavailable reference_step_failed")])
+def test_report_maps_v5_state_to_arguments(state, expect):
+    report = _steps("monitor")[_index("monitor", "Qualification status report")]["run"]
+    start = report.index('if [ "$V5_STATE" = "available" ]')
+    end = report.index("fi\n", start) + 3
+    snippet = report[start:end] + 'echo "${v5[@]}"\n'
+    res = subprocess.run(["bash", "-c", snippet], env={"V5_STATE": state, "W": "/w", "PATH": "/usr/bin:/bin"},
+                         capture_output=True, text=True)
+    assert res.stdout.strip() == expect
+
+
+def test_issue_body_update_uses_the_carried_forward_body():
+    """Codex P2 (#24): the existing-issue PATCH writes monitor-notify's body,
+    which carries the sampling-window baseline across unavailable runs."""
+    run = "\n".join(s.get("run", "") for s in _steps("status-issue"))
+    assert '--body-output "$W/body.md"' in run
+    assert 'issues/$number" -F body=@"$W/body.md"' in run
+    assert 'issues/$number" -F body=@"$W/out/status.md"' not in run
+
+
+def test_frozen_windows_step_is_read_only_and_precedes_v5():
+    """Single-source-of-truth correction: the previous frozen record is read
+    with GET only, the same read-only job token and unchanged permissions,
+    before the v5 step."""
+    names = [s.get("name", "") for s in _steps("monitor")]
+    i = _index("monitor", "Previous frozen sampling windows (read-only)")
+    assert i < _index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")
+    assert i > _index("monitor", "Install reviewer")
+    step = _steps("monitor")[i]
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+    run = step["run"]
+    import re
+    for line in run.splitlines():
+        if "gh api" in line:
+            assert not re.search(r"(^|\s)(-X|--method|-f|-F|--field|--raw-field|--input)(\s|=|$)", line), line
+    assert "faraday-review monitor-frozen" in run
+    assert "issues" not in _jobs()["monitor"]["permissions"]  # no new permission
+    assert len(names) == len(set(names))
+
+
+@pytest.mark.parametrize("state,exists,expect", [
+    ("loaded", True, "--frozen /w/frozen.json --frozen-status loaded"),
+    ("loaded", False, "--frozen-status unavailable"),
+    ("none", False, "--frozen-status none"),
+    ("invalid", False, "--frozen-status invalid"),
+    ("unavailable", False, "--frozen-status unavailable"),
+    ("", False, "--frozen-status unavailable"),
+    ("garbage", False, "--frozen-status unavailable")])
+def test_v5_step_maps_the_frozen_state_fail_closed(tmp_path, state, exists, expect):
+    run = _steps("monitor")[_index("monitor", "QA-1 reference and proposed v5 gate (non-blocking)")]["run"]
+    start = run.index('if [ "${FROZEN_STATE:-}" = loaded ]')
+    end = run.index("fi\n", start) + 3
+    w = tmp_path / "w"
+    w.mkdir()
+    if exists:
+        (w / "frozen.json").write_text("{}")
+    snippet = run[start:end].replace("$W/", str(w) + "/") + 'echo "${frozen_args[@]}"\n'
+    res = subprocess.run(["bash", "-c", snippet], env={"FROZEN_STATE": state, "PATH": "/usr/bin:/bin"},
+                         capture_output=True, text=True)
+    assert res.stdout.strip() == expect.replace("/w/", str(w) + "/")

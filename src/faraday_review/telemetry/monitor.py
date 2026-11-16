@@ -52,6 +52,7 @@ from .qualification import (
     repo_identity,
     require_timestamp,
 )
+from .qualification_v5 import FROZEN_FORMAT, frozen_record, frozen_record_errors, window_digest
 
 MONITOR_FORMAT = "faraday-review/qualification-monitor/v1"
 CHECKPOINTS = (5, 10, 15, 20)
@@ -270,10 +271,64 @@ def _anomaly_counts(anomalies: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+MAX_QUEUE_MARKER = 500
+# Closed-window digests kept in the issue marker (the newest; ~5 PRs each).
+MAX_WINDOW_MARKER = 100
+# v5 baselines a run without an available v5 report carries forward from the previous marker.
+CARRIED_MARKER_FIELDS = ("founder_queue", "founder_queue_total", "founder_queue_digest")
+# Founder-queue lines rendered into the issue body (65,536-character limit);
+# the full queue stays in status.json (Codex P2 r2, #20).
+MAX_RENDERED_QUEUE = 50
+
+
+def v5_summary(v5: dict[str, Any] | None, unavailable: str | None,
+               repository: str | None = None) -> dict[str, Any]:
+    """The QA-1 proposed gate, summarized for the status view. Never
+    authoritative: v4 above stays the gate of record until adoption."""
+    if v5 is None:
+        return {"available": False, "reason": unavailable or "not_computed"}
+    c, g = v5["counts"], v5["gate"]["conditions"]
+    summary = {
+        "available": True, "status": v5["status"], "authoritative": v5["authoritative"],
+        "verified": c["verified"], "threshold": v5["threshold"],
+        "verified_green": c["verified_green"], "green_minimum": g["green_coverage"]["minimum"],
+        "window_open": c["window_open"], "reference_unknown": c["reference_unknown"],
+        # Outstanding work comes from the gate conditions, which count every
+        # unanswered exception/sample including those whose reference is
+        # unknown; the per-PR verification counts are mutually exclusive
+        # (Codex P2, #24).
+        "exceptions_open": g["exceptions_open"], "samples_pending": g["sampling"]["pending"],
+        "escalation": g["escalation"]["status"], "sampling": g["sampling"]["status"],
+        "confirmed_material_disagreements": g["confirmed_material_disagreements"],
+        "met": v5["gate"]["met"],
+        "founder_queue": [{"pr_number": q["pr_number"], "head_sha": q["head_sha"], "reasons": q["reasons"]}
+                          for q in sorted(v5["founder_queue"], key=lambda q: q["pr_number"])],
+        # Digest of each CLOSED sampling window (membership + samples). The
+        # issue marker keeps the previous run's digests, so a later run that
+        # re-rolls a closed window is detected and routed to the founder as an
+        # exception (r50d, QA-1 refinement 6).
+    }
+    if repository is not None:
+        # Frozen record of every CLOSED window (seed, members with their class
+        # and escalation at closure, samples) plus its digest. The marker keeps
+        # them append-only; the next run reuses them verbatim, and a re-roll is
+        # still detected by digest (single-source-of-truth correction).
+        records = frozen_record(v5, repository)["windows"]
+        summary["frozen_windows"] = records
+        summary["closed_windows"] = {k: window_digest(r) for k, r in records.items()}
+    return summary
+
+
+def _queue_items(summary: dict[str, Any]) -> list[str]:
+    return sorted(f"{q['pr_number']}:{q['head_sha'][:12]}:{'+'.join(q['reasons'])}"
+                  for q in summary.get("founder_queue", []))
+
+
 def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
                  manifests: list[dict[str, Any]], archive_files: list[tuple[str, Path]],
                  repository: str, generated_at: str, stall_hours: int,
-                 input_evidence: dict[str, Any]) -> dict[str, Any]:
+                 input_evidence: dict[str, Any],
+                 v5: dict[str, Any] | None = None, v5_unavailable: str | None = None) -> dict[str, Any]:
     findings, unreadable, _ = _scan_archive(archive_files)
     ledger_auth = sum(1 for a in ledger["anomalies"] if a.get("kind") in _LEDGER_AUTH_KINDS)
     ledger_auth += sum(1 for a in readiness["anomalies"]
@@ -296,10 +351,14 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
     attention = (bool(anomaly_counts) or bool(pending) or bool(unreadable)
                  or any(r["stalled"] for r in not_completed) or cond["status"] == "fail"
                  or infra["failed_runs"] > 0 or bool(readiness["qualification"]["incomplete_prs"]))
+    with_v5 = v5 is not None or v5_unavailable is not None
+    summary = v5_summary(v5, v5_unavailable, repository) if with_v5 else None
+    if summary is not None and summary.get("founder_queue"):
+        attention = True
     status = "CRITICAL" if critical else ("ATTENTION" if attention else "OK")
     reached = checkpoint_reached(n)
     kill_command = f"gh variable delete {SHADOW_KILL_SWITCH} -R {repository}"
-    return {
+    doc = {
         "format": MONITOR_FORMAT,
         "generated_at": generated_at,
         "repository": repository,
@@ -354,6 +413,30 @@ def build_status(*, readiness: dict[str, Any], ledger: dict[str, Any],
                    "anomaly_counts": anomaly_counts, "critical_digest": critical_digest},
         "note": "Qualification evidence only. The monitor authorizes nothing (HR-1).",
     }
+    if summary is not None:
+        doc["qualification_v5"] = summary
+    if summary is not None and summary.get("available"):
+        # Only an AVAILABLE v5 report sets the founder-queue baseline. An
+        # unavailable run leaves it out, and the issue body carries the
+        # previous baseline forward, so a recovered run with the same
+        # outstanding work does not re-notify (Codex P2, #24).
+        items = _queue_items(summary)
+        # The visible list is capped (issue-body size); the digest and total
+        # cover the whole queue, so an item beyond the cap still notifies
+        # (Codex P2, #20).
+        doc["marker"]["founder_queue"] = items[:MAX_QUEUE_MARKER]
+        doc["marker"]["founder_queue_total"] = len(items)
+        doc["marker"]["founder_queue_digest"] = _sha256(canonical_bytes(items))
+        if "frozen_windows" in summary:
+            # Only an AVAILABLE v5 report records windows. An unavailable run
+            # (timeout, budget skip, rejected report) records none, so it is
+            # never compared as "every window vanished" (Codex P2, #24). The
+            # OLDEST windows are kept (frozen records must be contiguous from 0);
+            # windows beyond the cap stay unfrozen.
+            keep = sorted(summary["frozen_windows"], key=int)[:MAX_WINDOW_MARKER]
+            doc["marker"]["frozen_windows"] = {k: summary["frozen_windows"][k] for k in keep}
+            doc["marker"]["closed_windows"] = {k: summary["closed_windows"][k] for k in keep}
+    return doc
 
 
 def _fmt_rate(value: Any) -> str:
@@ -418,6 +501,29 @@ def render_markdown(status: dict[str, Any]) -> str:
     lines += ["", f"### Pending founder adjudications ({len(status['pending_adjudications'])})"]
     lines += [f"- #{p['pr_number']} head `{p['head_sha'][:12]}`"
               for p in status["pending_adjudications"]] or ["- none"]
+    v5 = status.get("qualification_v5")
+    if v5 is not None:
+        lines += ["", "### QA-1 proposed gate (v5): NOT authoritative"]
+        if not v5["available"]:
+            lines.append(f"- Unavailable this run ({v5['reason']}); the v4 status above is unaffected.")
+        else:
+            lines += [
+                f"- Verified qualifying real PRs: **{v5['verified']}/{v5['threshold']}** · verified green "
+                f"{v5['verified_green']}/{v5['green_minimum']} · in an open sampling window "
+                f"{v5['window_open']} · reference unknown {v5['reference_unknown']}",
+                f"- Escalation {v5['escalation']} · sampling {v5['sampling']} · open exceptions "
+                f"{v5['exceptions_open']} · confirmed material disagreements "
+                f"{v5['confirmed_material_disagreements']} · met {v5['met']}",
+                "- Proposed only: the gate of record is the v4 gate above until the founder adopts QA-1.",
+                "", f"#### Founder queue ({len(v5['founder_queue'])})"]
+            lines += [f"- #{q['pr_number']} head `{q['head_sha'][:12]}`: {', '.join(q['reasons'])}. "
+                      f"Apply exactly one `faraday/founder-<green|yellow|red|block>` label while the "
+                      f"head is `{q['head_sha'][:12]}`."
+                      for q in v5["founder_queue"][:MAX_RENDERED_QUEUE]] or [
+                          "- none: no exception or sample needs the founder"]
+            if len(v5["founder_queue"]) > MAX_RENDERED_QUEUE:
+                lines.append(f"- … and {len(v5['founder_queue']) - MAX_RENDERED_QUEUE} more "
+                             "(full queue in status.json)")
     lines += ["", "### Stalled / incomplete"]
     lines.append("- Incomplete PRs: " + (", ".join(f"#{n}" for n in status["incomplete_prs"])
                                          or "none"))
@@ -450,9 +556,25 @@ def render_markdown(status: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _load_v5(path: Path, readiness_path: Path, ledger_raw: bytes) -> dict[str, Any]:
+    v5 = _load_json(path, "qualification-v5 report")
+    if persisted_local_diagnostics("qualification-v5", v5):
+        raise MonitorError("qualification-v5 report fails its schema")
+    ev = v5["evidence"]
+    bare = lambda raw: _sha256(raw).removeprefix("sha256:")
+    if ev.get("ledger") != bare(ledger_raw) or ev.get("readiness") != bare(readiness_path.read_bytes()):
+        raise MonitorError("qualification-v5 report was not derived from this readiness and ledger")
+    return v5
+
+
 def monitor_report(*, readiness_path: Path, ledger_path: Path, manifest_paths: list[Path],
                    archive: Path, repository: str, generated_at: str,
-                   stall_hours: int = DEFAULT_STALL_HOURS) -> tuple[dict[str, Any], str]:
+                   stall_hours: int = DEFAULT_STALL_HOURS, v5_path: Path | None = None,
+                   v5_unavailable: str | None = None) -> tuple[dict[str, Any], str]:
+    if v5_path is not None and v5_unavailable is not None:
+        raise MonitorError("give a qualification-v5 report or an unavailable reason, not both")
+    if v5_unavailable is not None and not _KIND_RE.match(v5_unavailable):
+        raise MonitorError("invalid qualification-v5 unavailable reason")
     if not _REPOSITORY_RE.match(repository):
         raise MonitorError("invalid --repository")
     require_timestamp(generated_at, "--generated-at")
@@ -489,13 +611,27 @@ def monitor_report(*, readiness_path: Path, ledger_path: Path, manifest_paths: l
             raise MonitorError("a ledger input is missing from the archive or has changed")
     _, _, archived_docs = _scan_archive(files)
     _identity_guard(repository, [readiness, ledger, *manifests, *archived_docs])
+    v5 = None
+    if v5_path is not None:
+        # The proposed v5 report can never stop the v4 status: a report that
+        # fails any check is dropped (not rendered, not published; the
+        # workflow deletes it) and reported as rejected.
+        try:
+            v5 = _load_v5(v5_path, readiness_path, ledger_raw)
+            _identity_guard(repository, [v5])
+            v5_summary(v5, None)  # every field the summary reads (Codex P2, #20)
+        except (MonitorError, KeyError, TypeError, ValueError, AttributeError):
+            v5, v5_unavailable = None, "v5_rejected"
     evidence = {"readiness": {"name": readiness_path.name,
                               "sha256": _sha256(readiness_path.read_bytes())},
                 "ledger": {"name": ledger_path.name, "sha256": _sha256(ledger_raw)},
                 "manifests": manifest_evidence, "archive_files": len(files)}
     status = build_status(readiness=readiness, ledger=ledger, manifests=manifests,
                           archive_files=files, repository=repository, generated_at=generated_at,
-                          stall_hours=stall_hours, input_evidence=evidence)
+                          stall_hours=stall_hours, input_evidence=evidence, v5=v5,
+                          v5_unavailable=v5_unavailable)
+    if v5 is not None:
+        evidence["qualification_v5"] = {"name": v5_path.name, "sha256": _sha256(v5_path.read_bytes())}
     _identity_guard(repository, [status])
     return status, render_markdown(status)
 
@@ -535,7 +671,62 @@ def parse_marker(body: str, repository: str) -> dict[str, Any] | None:
     digest = marker.get("critical_digest")
     if digest is not None and not isinstance(digest, str):
         return None
+    queue = marker.get("founder_queue", [])
+    if not isinstance(queue, list) or not all(isinstance(q, str) for q in queue):
+        return None
+    total = marker.get("founder_queue_total", 0)
+    if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+        return None
+    qd = marker.get("founder_queue_digest")
+    if qd is not None and not isinstance(qd, str):
+        return None
+    windows = marker.get("closed_windows", {})
+    if not isinstance(windows, dict) or not all(
+            isinstance(k, str) and k.isdigit() and isinstance(v, str) and len(v) == 16
+            for k, v in windows.items()):
+        return None
+    frozen = marker.get("frozen_windows", {})
+    if not isinstance(frozen, dict) or not all(isinstance(k, str) and isinstance(v, dict)
+                                              for k, v in frozen.items()):
+        return None
     return marker
+
+
+def frozen_from_marker(marker: dict[str, Any] | None, repository: str) -> tuple[dict[str, Any] | None, str]:
+    """The previous run's frozen sampling windows, VERIFIED: every record is
+    well-formed (qualification-v5-frozen/v1), contiguous from window 0, and
+    matches the digest recorded next to it. Returns (doc, "loaded"), or
+    (None, "none") when there is no prior record, or (None, "invalid"), which
+    makes v5 sampling fail closed."""
+    if not marker or not marker.get("frozen_windows"):
+        if marker and marker.get("closed_windows"):
+            return None, "invalid"   # digests without records: cannot be reused
+        return None, "none"
+    records, digests = marker["frozen_windows"], marker.get("closed_windows", {})
+    doc = {"format": FROZEN_FORMAT, "repository": repository, "windows": records}
+    if frozen_record_errors(doc) or set(records) != set(digests) or any(
+            window_digest(records[k]) != digests[k] for k in records):
+        return None, "invalid"
+    return doc, "loaded"
+
+
+def rerolled_windows(current: dict[str, Any], previous: dict[str, Any] | None) -> list[str]:
+    """Closed windows recorded by the previous run whose membership or samples
+    differ now (or that vanished): sampling was re-rolled. Only windows the
+    current marker still covers by index range are compared, so marker
+    trimming is not mistaken for a re-roll."""
+    prev = (previous or {}).get("closed_windows", {})
+    cur = current.get("closed_windows", {})
+    if not prev or "closed_windows" not in current:
+        return []
+    floor = min((int(k) for k in cur), default=None)
+    out = []
+    for k in sorted(prev, key=int):
+        if floor is not None and int(k) < floor and len(cur) >= MAX_WINDOW_MARKER:
+            continue
+        if cur.get(k) != prev[k]:
+            out.append(k)
+    return out
 
 
 def notification(current: dict[str, Any], previous: dict[str, Any] | None) -> list[str]:
@@ -550,6 +741,12 @@ def notification(current: dict[str, Any], previous: dict[str, Any] | None) -> li
         reasons.append("critical")
     if any(v > prev["anomaly_counts"].get(k, 0) for k, v in current["anomaly_counts"].items()):
         reasons.append("new_anomaly")
+    if set(current.get("founder_queue", [])) - set(prev.get("founder_queue", [])) or (
+            current.get("founder_queue_total", 0) > MAX_QUEUE_MARKER
+            and current.get("founder_queue_digest") != prev.get("founder_queue_digest")):
+        reasons.append("founder_queue")
+    if rerolled_windows(current, previous):
+        reasons.append("sampling_rerolled")
     return reasons
 
 
@@ -570,9 +767,54 @@ def render_comment(status: dict[str, Any], previous: dict[str, Any] | None,
         grown = [f"`{k}` {prev_counts.get(k, 0)}→{v}" for k, v in marker["anomaly_counts"].items()
                  if v > prev_counts.get(k, 0)]
         lines.append("- New anomalies: " + ", ".join(grown))
+    if "founder_queue" in reasons:
+        new = sorted(set(marker.get("founder_queue", [])) - set((previous or {}).get("founder_queue", [])))
+        lines.append("- QA-1 (proposed) founder queue, new: "
+                     + ", ".join(f"#{q.split(':')[0]} ({q.split(':')[2]})" for q in new)
+                     + ". Label each PR with exactly one `faraday/founder-<class>` at its current head.")
+    if "sampling_rerolled" in reasons:
+        changed = rerolled_windows(marker, previous)
+        lines.append("- **QA-1 (proposed) EXCEPTION: closed sampling window(s) re-rolled**: "
+                     + ", ".join(f"window {k}" for k in changed)
+                     + ". A PR left the ledger or its recorded evidence changed; compare with the "
+                       "previous status. Founder review required before relying on v5 sampling.")
     lines += ["", "The issue body holds the full status. Qualification evidence only; "
               "authorizes nothing."]
     return "\n".join(lines) + "\n"
+
+
+def next_body(*, status_path: Path, previous_body: str | None, repository: str) -> str:
+    """The issue body to write this run. When this run has no available v5
+    report, the previous marker's v5 baselines (founder queue and closed
+    windows) are carried forward. A re-roll across an unavailable run is
+    still detected, and unchanged outstanding work is not re-notified when
+    v5 recovers (Codex P2 ×2, #24)."""
+    if not _REPOSITORY_RE.match(repository):
+        raise MonitorError("invalid --repository")
+    status = _load_json(status_path, "status document")
+    if not isinstance(status, dict) or status.get("format") != MONITOR_FORMAT:
+        raise MonitorError("not a qualification monitor status document")
+    if not isinstance(status.get("repository"), str) or \
+            repo_identity(status["repository"]) != repo_identity(repository):
+        raise MonitorError("status document is for another repository; refusing")
+    _identity_guard(repository, [status])
+    previous = parse_marker(previous_body, repository) if previous_body is not None else None
+    if previous:
+        carried = {k: previous[k] for k in CARRIED_MARKER_FIELDS
+                   if k not in status["marker"] and k in previous}
+        # Frozen windows are APPEND-ONLY: a verified previous record always
+        # wins for its index; this run only adds windows that closed since.
+        prev_doc, prev_state = frozen_from_marker(previous, repository)
+        if prev_state == "loaded":
+            fw = dict(prev_doc["windows"])
+            cw = dict(previous["closed_windows"])
+            for k, rec in status["marker"].get("frozen_windows", {}).items():
+                if k not in fw and len(fw) < MAX_WINDOW_MARKER and int(k) == len(fw):
+                    fw[k], cw[k] = rec, status["marker"]["closed_windows"][k]
+            carried["frozen_windows"], carried["closed_windows"] = fw, cw
+        if carried:
+            status = dict(status, marker=dict(status["marker"], **carried))
+    return render_markdown(status)
 
 
 def monitor_notify(*, status_path: Path, previous_body: str | None,

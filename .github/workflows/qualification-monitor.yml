@@ -70,6 +70,9 @@ jobs:
           STALL_HOURS: ${{ inputs.stall_hours }}
         run: |
           set -euo pipefail
+          # Job start, for the optional v5 step's remaining-time budget
+          # (Codex P2, #24).
+          date -u +%s > "$RUNNER_TEMP/faraday-monitor-job-start"
           case "$EVENT_NAME" in
             schedule|workflow_dispatch) ;;
             *) echo "::error::the qualification monitor supports only schedule and workflow_dispatch (got '$EVENT_NAME')."; exit 2 ;;
@@ -194,15 +197,101 @@ jobs:
           faraday-review readiness --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
             --generated-at "$now" --output "$W/out/readiness.json" --enrollment "$W/enrollment.json"
 
+      - name: Previous frozen sampling windows (read-only)
+        # Single-source-of-truth correction: closed QA-1 sampling windows are
+        # frozen in the status-issue marker and reused verbatim. GET only, with
+        # the same read-only job token (public caller). Any read failure is
+        # "unavailable", and an altered record is "invalid": both make v5
+        # sampling fail closed and never affect v4.
+        id: frozen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CALLER_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          W="$RUNNER_TEMP/faraday-monitor"
+          state=unavailable
+          if listing=$(gh api "repos/$CALLER_REPO/issues?state=open&labels=faraday-review-qualification&creator=github-actions%5Bbot%5D&per_page=100"); then
+            number=$(printf '%s' "$listing" | python -I -c 'import json,sys; xs=sorted(i["number"] for i in json.load(sys.stdin) if i.get("pull_request") is None and i.get("title") == "Faraday Review qualification status" and (i.get("user") or {}).get("login") == "github-actions[bot]"); print(xs[0] if xs else "")') || number=ERR
+            if [ -z "$number" ]; then
+              state=$(faraday-review monitor-frozen --repository "$CALLER_REPO" --output "$W/frozen.json") || state=unavailable
+            elif [ "$number" != ERR ] && gh api "repos/$CALLER_REPO/issues/$number" --jq '.body // ""' > "$W/previous-body.md"; then
+              state=$(faraday-review monitor-frozen --previous-body "$W/previous-body.md" --repository "$CALLER_REPO" \
+                --output "$W/frozen.json") || state=unavailable
+            fi
+          fi
+          case "$state" in none|loaded|invalid|unavailable) ;; *) state=unavailable ;; esac
+          echo "frozen windows: $state"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+
+      - name: QA-1 reference and proposed v5 gate (non-blocking)
+        # GHO-AUTONOMOUS-PRODUCTION-011. Read-only reference evidence (GET
+        # only, the same job token) and the PROPOSED v5 report. Never
+        # authoritative, and never able to stop the v4 status: on any
+        # failure the outputs are removed and v5 is reported unavailable.
+        id: v5
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MAX_REQUESTS: ${{ inputs.max_requests }}
+          # Must equal this job's timeout-minutes x 60 (guard-tested).
+          JOB_TIMEOUT_SECONDS: "1800"
+          V4_RESERVE_SECONDS: "300"
+          FROZEN_STATE: ${{ steps.frozen.outputs.state }}
+        run: |
+          set -uo pipefail
+          W="$RUNNER_TEMP/faraday-monitor"
+          now=$(cat "$W/now.txt")
+          # Wall-clock bounds relative to the job deadline (Codex P2 r2 #20,
+          # P2 #24): the reference budget is what remains of the job after
+          # the v4 reserve and the v5 bound (120 s + 2 x 30 s kill grace),
+          # capped at 600 s. Below 60 s the step is skipped, so slow earlier
+          # steps or a rate-limited collection can never stop the v4 report.
+          start=$(cat "$RUNNER_TEMP/faraday-monitor-job-start" 2>/dev/null || echo 0)
+          remaining=$(( start + JOB_TIMEOUT_SECONDS - V4_RESERVE_SECONDS - $(date -u +%s) ))
+          ref_budget=$(( remaining - 180 ))
+          [ "$ref_budget" -gt 600 ] && ref_budget=600
+          if [ "$start" -le 0 ] || [ "$ref_budget" -lt 60 ]; then
+            echo "::warning::QA-1 reference/v5 step skipped: job time budget exhausted; the v4 qualification status is unaffected."
+            echo "state=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${FROZEN_STATE:-}" = loaded ] && [ -s "$W/frozen.json" ]; then
+            frozen_args=(--frozen "$W/frozen.json" --frozen-status loaded)
+          elif [ "${FROZEN_STATE:-}" = none ] || [ "${FROZEN_STATE:-}" = invalid ]; then
+            frozen_args=(--frozen-status "$FROZEN_STATE")
+          else
+            frozen_args=(--frozen-status unavailable)
+          fi
+          if timeout -k 30 "$ref_budget" faraday-review reference --ledger "$W/out/ledger.json" --synthetic "$W/synthetic-prs.json" \
+               --enrollment "$W/enrollment.json" --collected-at "$now" --max-requests "$MAX_REQUESTS" \
+               --output "$W/out/reference.json" \
+             && timeout -k 30 120 faraday-review qualification-v5 --readiness "$W/out/readiness.json" \
+               --ledger "$W/out/ledger.json" --reference "$W/out/reference.json" --generated-at "$now" \
+               --output "$W/out/qualification-v5.json" --enrollment "$W/enrollment.json" "${frozen_args[@]}"; then
+            echo "state=available" >> "$GITHUB_OUTPUT"
+          else
+            rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"
+            echo "::warning::QA-1 reference/v5 step failed; the v4 qualification status is unaffected."
+            echo "state=unavailable" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Qualification status report
         id: report
         env:
           CALLER_REPO: ${{ github.repository }}
           STALL_HOURS: ${{ inputs.stall_hours }}
+          V5_STATE: ${{ steps.v5.outputs.state }}
         run: |
           set -euo pipefail
           W="$RUNNER_TEMP/faraday-monitor"
           now=$(cat "$W/now.txt")
+          if [ "$V5_STATE" = "available" ]; then
+            v5=(--qualification-v5 "$W/out/qualification-v5.json")
+          elif [ "$V5_STATE" = "skipped" ]; then
+            v5=(--qualification-v5-unavailable job_budget_exhausted)
+          else
+            v5=(--qualification-v5-unavailable reference_step_failed)
+          fi
           manifests=()
           for m in "$W"/archive/collection-manifest-*.json; do
             [ -f "$m" ] || continue
@@ -213,7 +302,11 @@ jobs:
           faraday-review monitor-report --readiness "$W/out/readiness.json" --ledger "$W/out/ledger.json" \
             "${manifests[@]}" --archive-dir "$W/archive" --repository "$CALLER_REPO" \
             --generated-at "$now" --stall-hours "$STALL_HOURS" \
-            --output "$W/out/status.json" --markdown-output "$W/out/status.md" || rc=$?
+            --output "$W/out/status.json" --markdown-output "$W/out/status.md" "${v5[@]}" || rc=$?
+          # A v5 report the monitor rejected is never uploaded.
+          if ! python -I -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("qualification_v5", {}).get("available") else 1)' "$W/out/status.json" 2>/dev/null; then
+            rm -f "$W/out/reference.json" "$W/out/qualification-v5.json"
+          fi
           case "$rc" in
             0) crit=false ;;
             3) crit=true ;;
@@ -306,7 +399,7 @@ jobs:
           fi
           gh api "repos/$CALLER_REPO/issues/$number" --jq '.body // ""' > "$W/previous-body.md"
           faraday-review monitor-notify --status "$W/out/status.json" --repository "$CALLER_REPO" \
-            --previous-body "$W/previous-body.md" --comment-output "$W/comment.md"
+            --previous-body "$W/previous-body.md" --comment-output "$W/comment.md" --body-output "$W/body.md"
           # Comment first, then advance the marker in the body: if the
           # comment fails the body keeps the old marker, so the next run
           # notifies again (Codex P2, #17).
@@ -314,5 +407,5 @@ jobs:
             printf '\n[Monitor run](%s)\n' "$RUN_URL" >> "$W/comment.md"
             gh api -X POST "repos/$CALLER_REPO/issues/$number/comments" -F body=@"$W/comment.md" --silent
           fi
-          gh api -X PATCH "repos/$CALLER_REPO/issues/$number" -F body=@"$W/out/status.md" --silent
+          gh api -X PATCH "repos/$CALLER_REPO/issues/$number" -F body=@"$W/body.md" --silent
           echo "updated issue #$number"
