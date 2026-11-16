@@ -165,6 +165,10 @@ def _codex(client: GitHubClient, repo: str, n: int, head: str, first_head: str) 
             "first_head_receipt_id": at_first[0] if at_first else None}
 
 
+# GitHub: check runs are listed for at most the 1,000 most recent suites of a ref.
+CHECK_SUITE_LISTING_CAP = 1000
+
+
 def _required_checks(client: GitHubClient, repo: str, base_ref: str, head: str) -> dict[str, Any]:
     # Required contexts from both enforcement paths, read-only: classic
     # branch protection (exposed on the branch object) and rulesets.
@@ -193,6 +197,15 @@ def _required_checks(client: GitHubClient, repo: str, base_ref: str, head: str) 
             required.add((str(item["context"]), pin(item.get("integration_id"))))
     if not required:
         return {"status": UNKNOWN, "reason": "no_required_checks", "contexts": []}
+    # The check-runs listing for a ref covers only the 1,000 most recent check
+    # suites; beyond that an older independent suite (possibly failing) can be
+    # missing, so the result is unknown rather than success (Codex P2, #22).
+    suites = client.get_json(f"/repos/{repo}/commits/{head}/check-suites", {"per_page": 1})
+    suite_total = suites.get("total_count") if isinstance(suites, dict) else None
+    if not isinstance(suite_total, int):
+        return {"status": UNKNOWN, "reason": "check_suites_count_unknown", "contexts": []}
+    if suite_total > CHECK_SUITE_LISTING_CAP:
+        return {"status": UNKNOWN, "reason": "check_suites_capped", "contexts": []}
     # Commit statuses (no app): they can satisfy only an unpinned requirement,
     # as in github/checks.py (Codex P2, #18). Every page of the combined
     # status is read (default page size 30); a listing shorter than its
