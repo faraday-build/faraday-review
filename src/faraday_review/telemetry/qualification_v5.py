@@ -120,12 +120,15 @@ def _selection_class(ledger: dict[str, Any], repository: str, pr: int,
 
 
 def _arrival(ledger: dict[str, Any], repository: str, pr: int) -> str:
-    """Earliest recorded occurrence time of the PR in the ledger: a recorded,
-    never-rewritten fact, so arrival order does not depend on live reference
-    evidence (r50d)."""
+    """When the PR first became countable: its earliest COMPLETED occurrence in
+    the ledger, a recorded, never-rewritten fact. Arrival therefore does not
+    depend on live reference evidence (r50d), and a PR whose early runs all
+    failed arrives when it first completes, after windows that closed in the
+    meantime, instead of being inserted ahead of them (Codex P2 #23)."""
     times = [str(occ.get("created_at")) for entry in ledger["entries"]
              if _key(entry["repository"], entry["pr_number"]) == _key(repository, pr)
-             for run in entry["runs"] for occ in run["occurrence_log"] if occ.get("created_at")]
+             for run in entry["runs"] for occ in run["occurrence_log"]
+             if occ.get("created_at") and occ.get("final_status") == "completed"]
     return min(times) if times else ""
 
 
@@ -140,12 +143,28 @@ def _seen_at(h: dict[str, Any]) -> str | None:
 
 def _tenure(ref: dict[str, Any], head: str) -> tuple[str | None, str | None]:
     """[start, end) during which `head` was the PR head (a later head's
-    arrival ends it)."""
-    dated = sorted(((_seen_at(h), h["head_sha"]) for h in ref["heads"] if _seen_at(h)))
-    for i, (start, sha) in enumerate(dated):
-        if sha == head:
-            nxt = next((t for t, s in dated[i + 1:] if s != head), None)
-            return start, nxt
+    arrival ends it). Heads are ordered by PR-specific evidence (the first
+    shadow-run telemetry of that PR at that head); a check-suite time may move
+    a head's start earlier (a label applied before its shadow run), but a
+    suite time older than the previous head's PR-specific arrival is ignored. A commit checked earlier
+    on another branch therefore cannot reverse the PR's head transitions
+    (Codex P2 #23, r50d)."""
+    heads = [h for h in ref["heads"] if _seen_at(h)]
+    order = sorted(heads, key=lambda h: (str(h.get("first_created_at") or _seen_at(h)), h["head_sha"]))
+    starts = []
+    for i, h in enumerate(order):
+        start = _seen_at(h)
+        prev = str(order[i - 1].get("first_created_at") or _seen_at(order[i - 1])) if i else None
+        if prev is not None and start < prev:
+            # Suite evidence older than the previous head's arrival comes from
+            # elsewhere (another branch): ignore it and use this head's own
+            # PR-specific arrival.
+            start = str(h.get("first_created_at") or prev)
+        starts.append(start)
+    for i, h in enumerate(order):
+        if h["head_sha"] == head:
+            nxt = next((starts[j] for j in range(i + 1, len(order)) if order[j]["head_sha"] != head), None)
+            return starts[i], nxt
     return None, None
 
 

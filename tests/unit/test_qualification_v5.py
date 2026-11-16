@@ -583,3 +583,48 @@ def test_arrival_order_comes_from_the_ledger_not_live_reference_evidence():
         p["heads"][0]["first_created_at"] = f"2026-11-15T{23 - p['pr_number']:02d}:00:00Z"
     r = qualification_v5(w.readiness(), w.ledger(), ref, generated_at=TS, founder_node_id=FOUNDER, evidence={})
     assert [x["members"] for x in r["windows"]] == [x["members"] for x in base["windows"]]
+
+
+def test_pr_whose_early_runs_failed_arrives_when_it_first_completes():
+    """Codex P2 4581695210: PR 1 initially only failed, PRs 2-11 completed and
+    their windows closed; when PR 1 later completes it must not be inserted
+    ahead of the closed windows."""
+    def world(include_pr1):
+        w = World()
+        for n in range(1, 12):
+            if n == 1 and not include_pr1:
+                continue
+            w.add(n, heads=[(h(n), f"2026-11-15T{n:02d}:00:00Z")])
+        return w
+    base = world(False).run()
+    w = world(True)
+    led = w.ledger()
+    for e in led["entries"]:
+        if e["pr_number"] == 1:  # an early failed occurrence, then a late completion
+            occ = e["runs"][0]["occurrence_log"][0]
+            e["runs"][0]["occurrence_log"] = [
+                dict(occ, final_status="failed", created_at="2026-11-15T01:00:00Z", event_key="f"),
+                dict(occ, created_at="2026-11-15T23:00:00Z", event_key="c")]
+    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS, founder_node_id=FOUNDER, evidence={})
+    closed_base = [x for x in base["windows"] if x["closed"]]
+    assert [(x["members"], x["sampled"]) for x in r["windows"][:len(closed_base)]] == \
+        [(x["members"], x["sampled"]) for x in closed_base]
+
+
+def test_head_checked_earlier_on_another_branch_does_not_reverse_tenure():
+    """Codex P2 4581695212: old head first seen Nov 15; new head pushed Nov 16
+    whose commit was checked on another branch Nov 14. A founder label on
+    Nov 16 binds to the new head."""
+    from faraday_review.telemetry.qualification_v5 import founder_answer
+    old, new = h(1), h(1, 2)
+    ref = {"heads": [{"head_sha": old, "first_created_at": "2026-11-15T10:00:00Z", "first_suite_at": None},
+                     {"head_sha": new, "first_created_at": "2026-11-16T10:00:00Z",
+                      "first_suite_at": "2026-11-14T10:00:00Z"}],
+           "founder_label_events": [{"event": "labeled", "label": "faraday/founder-red", "actor_node_id": FOUNDER,
+                                     "created_at": "2026-11-16T12:00:00Z", "id": 1}]}
+    assert founder_answer(ref, new, FOUNDER)["status"] == "answered"
+    assert founder_answer(ref, old, FOUNDER)["status"] == "none"
+    # A label while the old head was still current (Nov 15 12:00) binds to the old head.
+    ref["founder_label_events"][0]["created_at"] = "2026-11-15T12:00:00Z"
+    assert founder_answer(ref, old, FOUNDER)["status"] == "answered"
+    assert founder_answer(ref, new, FOUNDER)["status"] == "none"
