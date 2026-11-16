@@ -21,6 +21,10 @@
         "format": "date",
         "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
         "description": "Optional. Only runs created on or after this date are collected."
+      },
+      "repository_floor": {
+        "enum": ["A0", "A3"],
+        "description": "Optional. QA-1 reference repository floor (ADR-0014 §3 repository_floors): A3 for production, deployment authority, customer data or money movement; otherwise A0. Absent: the QA-1 reference tier is unknown and the PR never counts under QA-1."
       }
     }
   }
