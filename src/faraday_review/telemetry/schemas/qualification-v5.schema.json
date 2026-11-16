@@ -25,10 +25,11 @@
     "counts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["qualifying", "reference_unknown", "exception_open", "sample_pending", "window_open",
-                   "verified", "verified_green"],
+      "required": ["qualifying", "not_qualifying", "reference_unknown", "exception_open", "sample_pending",
+                   "window_open", "verified", "verified_green"],
       "properties": {
         "qualifying": { "type": "integer", "minimum": 0 },
+        "not_qualifying": { "type": "integer", "minimum": 0 },
         "reference_unknown": { "type": "integer", "minimum": 0 },
         "exception_open": { "type": "integer", "minimum": 0 },
         "sample_pending": { "type": "integer", "minimum": 0 },
@@ -83,8 +84,8 @@
           "sampled": { "type": "boolean" },
           "founder_answer": { "type": "object", "required": ["status", "class", "labeled_at"] },
           "truth_review_needed": { "type": ["boolean", "null"] },
-          "verification": { "enum": ["reference_unknown", "exception_open", "sample_pending", "window_open",
-                                     "verified"] }
+          "verification": { "enum": ["not_qualifying", "reference_unknown", "exception_open", "sample_pending",
+                                     "window_open", "verified"] }
         }
       }
     }

@@ -94,13 +94,15 @@ def _latest_qualifying(ledger: dict[str, Any], repository: str, pr: int, head: s
     return best[1], best[2] if isinstance(best[2], bool) else None
 
 
-def _selection_class(ledger: dict[str, Any], repository: str, pr: int, first_head: str,
-                     released: list[str] | None) -> str | None:
-    """The class used to select samples: that of the EARLIEST qualifying
-    occurrence on the PR's first head (else on any of its heads). Once
-    recorded it never changes, so a later run or push that reclassifies a
-    member cannot change which members of a window are sampled (Codex P2,
-    #23). None if the PR has no qualifying occurrence."""
+def _selection_class(ledger: dict[str, Any], repository: str, pr: int,
+                     first_head: str) -> str | None:
+    """The class used to select samples: that of the EARLIEST eligible,
+    completed, fresh occurrence on the PR's first head (else on any of its
+    heads). Only facts recorded once per occurrence are used. Policy-digest
+    qualification is deliberately NOT consulted: a later release can change
+    which occurrences qualify, and that must not change which members of a
+    closed window were sampled (Codex P2 #23; r50d stability correction).
+    None if the PR has no such occurrence."""
     best = None
     for entry in ledger["entries"]:
         if _key(entry["repository"], entry["pr_number"]) != _key(repository, pr):
@@ -110,13 +112,21 @@ def _selection_class(ledger: dict[str, Any], repository: str, pr: int, first_hea
             for occ in run["occurrence_log"]:
                 if (occ.get("eligible") and occ.get("final_status") == "completed"
                         and occ.get("stale_state") == "fresh"
-                        and occ.get("classifier_class") in CLASS_ORDER
-                        and not _occurrence_exclusions(occ, run.get("policy_digest_verified", False),
-                                                       run.get("policy_bundle_digest"), released)):
+                        and occ.get("classifier_class") in CLASS_ORDER):
                     rank = (0 if on_first else 1, str(occ.get("created_at")), str(occ.get("event_key")))
                     if best is None or rank < best[0]:
                         best = (rank, occ["classifier_class"])
     return best[1] if best else None
+
+
+def _arrival(ledger: dict[str, Any], repository: str, pr: int) -> str:
+    """Earliest recorded occurrence time of the PR in the ledger: a recorded,
+    never-rewritten fact, so arrival order does not depend on live reference
+    evidence (r50d)."""
+    times = [str(occ.get("created_at")) for entry in ledger["entries"]
+             if _key(entry["repository"], entry["pr_number"]) == _key(repository, pr)
+             for run in entry["runs"] for occ in run["occurrence_log"] if occ.get("created_at")]
+    return min(times) if times else ""
 
 
 def _seen_at(h: dict[str, Any]) -> str | None:
@@ -241,17 +251,18 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
 
     items = []
     for c in readiness["counted_prs"]:
-        if c["qualification"]["status"] not in QUALIFYING:
-            continue
+        # Every counted real PR is a window member, qualifying or not, so a PR
+        # that later stops qualifying (an incomplete or excluded new head)
+        # never shifts window boundaries; it is only ineligible (r50d).
+        qualifying = c["qualification"]["status"] in QUALIFYING
         k = _key(c["repository"], c["pr_number"])
         ref = refs.get(k)
         view = _reference_view(ref, c["head_sha"])
         q_cls, q_escalated = _latest_qualifying(ledger, c["repository"], c["pr_number"], c["head_sha"],
                                                 readiness.get("gate", {}).get("released_policy_digests"))
         cls = q_cls if q_cls is not None else c["classifier_class"]
-        heads = ref["heads"] if ref else []
-        first_seen = min((h["first_created_at"] for h in heads if h["first_created_at"]), default=None)
         items.append({
+            "qualifying": qualifying,
             "repository": c["repository"], "pr_number": int(c["pr_number"]), "head_sha": c["head_sha"],
             "faraday_class": cls,
             "escalated": q_escalated,
@@ -261,10 +272,8 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
                                else {"status": "none", "class": None, "labeled_at": None}),
             "first_head_sha": ref["first_head_sha"] if ref else c["head_sha"],
             "selection_class": _selection_class(
-                ledger, c["repository"], c["pr_number"], ref["first_head_sha"] if ref else c["head_sha"],
-                readiness.get("gate", {}).get("released_policy_digests")) or cls,
-            "first_head_receipt_id": ref["codex"]["first_head_receipt_id"] if ref else None,
-            "_first_seen": first_seen or "",
+                ledger, c["repository"], c["pr_number"], ref["first_head_sha"] if ref else c["head_sha"]) or cls,
+            "_first_seen": _arrival(ledger, c["repository"], c["pr_number"]),
         })
 
     # Sampling over every qualifying PR in arrival order. A member whose
@@ -277,8 +286,10 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
     for w in range(len(candidates) // WINDOW + (1 if len(candidates) % WINDOW else 0)):
         members = candidates[w * WINDOW:(w + 1) * WINDOW]
         closed = len(members) == WINDOW
-        seed = _sha([[repo_identity(m["repository"]), m["pr_number"], m["first_head_sha"],
-                      m["first_head_receipt_id"]] for m in members])
+        # The seed binds only immutable, GitHub/git-assigned identities (repository,
+        # PR number, first head SHA): a deleted or edited Codex receipt can no
+        # longer re-roll a window (Codex P2 #23, r50d).
+        seed = _sha([[repo_identity(m["repository"]), m["pr_number"], m["first_head_sha"]] for m in members])
         sampled = []
         if closed:
             ranked = sorted(members, key=lambda m: _rank(seed, m))
@@ -298,7 +309,8 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
                         "sampled": [{"repository": s["repository"], "pr_number": s["pr_number"]}
                                     for s in sampled]})
 
-    counts = {"qualifying": len(items), "reference_unknown": 0, "exception_open": 0, "sample_pending": 0,
+    counts = {"qualifying": sum(1 for i in items if i["qualifying"]), "not_qualifying": 0,
+              "reference_unknown": 0, "exception_open": 0, "sample_pending": 0,
               "window_open": 0, "verified": 0, "verified_green": 0}
     confirmed: list[dict[str, Any]] = []
     sampled_disagreements = 0
@@ -316,6 +328,18 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
     for i in sorted(items, key=lambda i: (repo_identity(i["repository"]), i["pr_number"])):
         ans = i["founder_answer"]
         answered = ans["status"] == "answered"
+        if not i["qualifying"]:
+            # A window member for stability only: never verified, never queued,
+            # never counted toward any gate condition (r50d).
+            counts["not_qualifying"] += 1
+            out_prs.append({
+                "repository": i["repository"], "pr_number": i["pr_number"], "head_sha": i["head_sha"],
+                "faraday_class": i["faraday_class"], "escalated": i["escalated"],
+                "reference": i["reference"], "exceptions": [],
+                "window": i.get("window"), "sampled": bool(i.get("sampled")),
+                "founder_answer": ans, "truth_review_needed": None, "verification": "not_qualifying",
+            })
+            continue
         if answered and CLASS_ORDER.index(ans["class"]) > CLASS_ORDER.index(i["faraday_class"]):
             # The founder's class is more severe than Faraday's: a confirmed
             # under-classification, wherever the founder answered (queued or
