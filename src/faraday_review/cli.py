@@ -666,10 +666,23 @@ def _cmd_qualification_v5(args) -> int:
     except (OSError, json.JSONDecodeError) as exc:
         print(f"qualification-v5: cannot read inputs: {exc}", file=sys.stderr)
         return 2
+    frozen, frozen_status = None, args.frozen_status
+    if args.frozen:
+        if frozen_status != "loaded":
+            print("qualification-v5: --frozen requires --frozen-status loaded", file=sys.stderr)
+            return 2
+        try:
+            frozen = json.loads(Path(args.frozen).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            frozen, frozen_status = None, "unavailable"   # fail closed: sampling cannot pass
+    elif frozen_status == "loaded":
+        print("qualification-v5: --frozen-status loaded requires --frozen", file=sys.stderr)
+        return 2
     try:
         report = qualification_v5(
             docs["readiness"], docs["ledger"], docs["reference"], generated_at=args.generated_at,
             founder_node_id=args.founder_node_id, threshold=args.threshold,
+            frozen=frozen, frozen_status=frozen_status,
             evidence={k: hashlib.sha256(p.read_bytes()).hexdigest() for k, p in sorted(paths.items())})
     except (QualificationError, KeyError, TypeError, ValueError) as exc:
         print(f"qualification-v5: invalid_input: {exc}", file=sys.stderr)
@@ -914,6 +927,10 @@ def main(argv: list[str] | None = None) -> int:
     v5.add_argument("--founder-node-id", default=DEFAULT_FOUNDER_NODE_ID)
     v5.add_argument("--threshold", type=int, default=GATE_THRESHOLD_FLOOR)
     v5.add_argument("--enrollment", default=None)
+    v5.add_argument("--frozen", default=None,
+                    help="verified frozen closed-window record (qualification-v5-frozen/v1)")
+    v5.add_argument("--frozen-status", default="none", choices=("none", "loaded", "unavailable", "invalid"),
+                    help="none = no prior record (first run); unavailable/invalid fail closed")
 
     pre = sub.add_parser("preflight", help="read-only activation checks for one caller repo")
     pre.add_argument("--repo", required=True)

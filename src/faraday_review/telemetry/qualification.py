@@ -1202,6 +1202,61 @@ def _escalation_condition(accuracy: dict[str, Any]) -> dict[str, Any]:
             "unknown": unknown}
 
 
+FACTS_VERSION = 1
+
+
+def _countable_occurrence(occ: dict[str, Any]) -> bool:
+    """The per-occurrence counting predicate readiness applies (identity-
+    eligible, completed, fresh): the ONE definition of "this occurrence makes
+    the PR countable", shared with the canonical facts below."""
+    return bool(occ["eligible"] and occ["final_status"] == "completed" and occ["stale_state"] == "fresh")
+
+
+def canonical_pr_facts(entries: list[dict[str, Any]], current: list[tuple[dict[str, Any], dict[str, Any]]],
+                       released: list[str] | None) -> dict[str, Any]:
+    """Canonical, deterministic per-PR facts, derived ONCE here from the same
+    predicates readiness uses, for consumers that must not re-derive them
+    (qualification v5; GHO-PRODUCTION-1 single-source-of-truth correction).
+
+    - first_countable: the earliest countable occurrence on ANY head of the PR
+      (when the PR first became countable): created_at, head_sha, class.
+      Immutable once recorded.
+    - latest_qualifying: the latest countable, non-excluded occurrence on the
+      current head's runs (class and recorded escalation), or null.
+    - head_transitions: chronological [created_at, head_sha] changes built
+      from identity-eligible FRESH occurrences only. A stale rerun is never
+      a head transition.
+    Times are ordered chronologically (_sort_key_ts), ties by event_key."""
+    def key(occ: dict[str, Any]) -> tuple:
+        return (_sort_key_ts(occ["created_at"]), str(occ["event_key"]))
+    occs = [(e, r, o) for e in entries for r in e["runs"] for o in r["occurrence_log"]]
+    countable = [(e, o) for e, _, o in occs if _countable_occurrence(o)]
+    first = min(countable, key=lambda eo: key(eo[1]), default=None)
+    latest = None
+    for _, run in current:
+        for occ in run["occurrence_log"]:
+            if _countable_occurrence(occ) and not _occurrence_exclusions(
+                    occ, run["policy_digest_verified"], run["policy_bundle_digest"], released):
+                if latest is None or key(occ) > key(latest):
+                    latest = occ
+    fresh = sorted(((o, e["head_sha"]) for e, _, o in occs if o["eligible"] and o["stale_state"] == "fresh"),
+                   key=lambda oh: (key(oh[0]), oh[1]))
+    transitions: list[list[str]] = []
+    for occ, head in fresh:
+        if not transitions or transitions[-1][1] != head:
+            transitions.append([str(occ["created_at"]), str(head)])
+    return {
+        "facts_version": FACTS_VERSION,
+        "first_countable": ({"created_at": str(first[1]["created_at"]), "head_sha": str(first[0]["head_sha"]),
+                             "classifier_class": first[1]["classifier_class"]} if first else None),
+        "latest_qualifying": ({"created_at": str(latest["created_at"]), "event_key": str(latest["event_key"]),
+                               "classifier_class": latest["classifier_class"],
+                               "escalated": latest.get("escalated") if isinstance(latest.get("escalated"), bool)
+                               else None} if latest else None),
+        "head_transitions": transitions,
+    }
+
+
 def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, generated_at: str,
               ledger_evidence: dict[str, str], synthetic_evidence: dict[str, str],
               threshold: int = GATE_THRESHOLD_FLOOR,
@@ -1311,7 +1366,10 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
                 anomalies.append({"kind": "adjudicated_pr_not_qualifying",
                                   "repository": pr_key[0], "pr_number": pr_key[1],
                                   "status": status})
-        counted.append({"entry": entry, "run": run, "first_seen": first_seen,
+        facts = canonical_pr_facts(
+            [e for e in real_entries if (repo_identity(e["repository"]), e["pr_number"]) == pr_key],
+            pairs, released)
+        counted.append({"entry": entry, "run": run, "first_seen": first_seen, "facts": facts,
                         "all_runs": [r for _, r in pairs],
                         "scored_class": scored[1] if scored else run["classifier_class"],
                         "scored_escalated": scored[2] if scored else run["escalated"],
@@ -1401,7 +1459,10 @@ def readiness(ledger: dict[str, Any], synthetic: list[dict[str, Any]], *, genera
              "head_sha": i["entry"]["head_sha"], "review_id": i["run"]["review_id"],
              "classifier_class": i["run"]["classifier_class"],
              "adjudicated": i["entry"]["founder_adjudication"] is not None,
-             "qualification": i["qualification"]}
+             "qualification": i["qualification"],
+             # Additive (v4-compatible): canonical facts for consumers; never
+             # an input to the v4 gate.
+             "facts": i["facts"]}
             for i in counted
         ],
         "synthetic_excluded": synthetic_excluded,
