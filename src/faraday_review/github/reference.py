@@ -194,10 +194,14 @@ def _required_checks(client: GitHubClient, repo: str, base_ref: str, head: str) 
     if not required:
         return {"status": UNKNOWN, "reason": "no_required_checks", "contexts": []}
     # Commit statuses (no app): they can satisfy only an unpinned requirement,
-    # as in github/checks.py (Codex P2, #18).
-    combined = client.get_json(f"/repos/{repo}/commits/{head}/status")
-    statuses = {str(s.get("context")): s for s in (combined.get("statuses") or [])
-                if isinstance(combined, dict)} if isinstance(combined, dict) else {}
+    # as in github/checks.py (Codex P2, #18). Every page of the combined
+    # status is read (default page size 30); a listing shorter than its
+    # total_count fails closed (Codex P2 r2, #18).
+    status_list, status_total = client.paginate_key_counted(
+        f"/repos/{repo}/commits/{head}/status", "statuses")
+    if status_total is not None and len(status_list) < status_total:
+        return {"status": UNKNOWN, "reason": "statuses_truncated", "contexts": []}
+    statuses = {str(s.get("context")): s for s in status_list if isinstance(s, dict)}
     contexts = []
     for context, app_id in sorted(required, key=lambda r: (r[0], -1 if r[1] is None else r[1])):
         runs = client.paginate_key(f"/repos/{repo}/commits/{head}/check-runs", "check_runs",
@@ -207,9 +211,17 @@ def _required_checks(client: GitHubClient, repo: str, base_ref: str, head: str) 
         latest = max(runs, key=lambda r: (str(r.get("started_at") or ""), int(r["id"])), default=None)
         conclusion = latest.get("conclusion") if latest else None
         source = "check_run" if latest else None
-        if latest is None and app_id is None and context in statuses:
-            conclusion = str(statuses[context].get("state"))
-            source = "status"
+        if app_id is None and context in statuses:
+            # GitHub requires every source that reports an unpinned required
+            # name to pass, so a same-named check run and commit status are
+            # evaluated conjunctively (Codex P2 r2, #18).
+            state = str(statuses[context].get("state"))
+            if latest is None:
+                conclusion, source = state, "status"
+            else:
+                source = "check_run+status"
+                if conclusion == "success" and state != "success":
+                    conclusion = state
         contexts.append({"context": context, "app_id": app_id, "conclusion": conclusion,
                          "check_run_id": int(latest["id"]) if latest else None, "evidence_kind": source})
     ok = all(c["conclusion"] == "success" for c in contexts)

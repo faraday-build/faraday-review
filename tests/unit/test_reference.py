@@ -331,6 +331,55 @@ def test_commit_status_satisfies_only_unpinned_requirements(monkeypatch, tmp_pat
     assert rc["status"] == status
 
 
+@pytest.mark.parametrize("run_conclusion,state,status", [
+    ("success", "success", "success"), ("success", "failure", "not_success"),
+    ("success", "pending", "not_success"), ("failure", "success", "not_success")])
+def test_same_named_check_run_and_status_are_conjunctive(monkeypatch, tmp_path, run_conclusion, state, status):
+    """Codex P2 r2 (#18): an unpinned requirement reported by both a check
+    run and a commit status holds only when both pass."""
+    api = Api()
+    api.classic = {"checks": [{"context": "required-checks", "app_id": None}], "contexts": ["required-checks"]}
+    api.check_runs[0]["conclusion"] = run_conclusion
+    api.statuses = [{"context": "required-checks", "state": state}]
+    rc = only(run(monkeypatch, tmp_path, api)[1])["required_checks"]
+    assert rc["status"] == status
+    assert rc["contexts"][0]["evidence_kind"] == "check_run+status"
+
+
+class PagedStatuses(Api):
+    """Combined status split over two pages, the required context on page 2."""
+
+    def __init__(self, truncate=False):
+        super().__init__()
+        self.check_runs = []
+        self.classic = {"checks": [{"context": "ci/legacy", "app_id": None}], "contexts": ["ci/legacy"]}
+        self.truncate = truncate
+
+    @property
+    def routes(self):
+        routes = dict(super().routes)
+        b = f"/repos/{REPO}"
+        page1 = [{"context": f"ctx-{i}", "state": "success"} for i in range(30)]
+        total = 32 if self.truncate else 31
+        routes[f"{b}/commits/{HEAD}/status"] = (
+            200, {"total_count": total, "statuses": page1},
+            {"next": {"url": f"https://api.github.com{b}/status-page-2"}})
+        routes[f"{b}/status-page-2"] = (200, {"total_count": total,
+                                              "statuses": [{"context": "ci/legacy", "state": "success"}]})
+        return routes
+
+
+def test_combined_status_is_paginated(monkeypatch, tmp_path):
+    """Codex P2 r2 (#18): a required status on a later page is read."""
+    rc = only(run(monkeypatch, tmp_path, PagedStatuses())[1])["required_checks"]
+    assert rc["status"] == "success" and rc["contexts"][0]["evidence_kind"] == "status"
+
+
+def test_truncated_combined_status_fails_closed(monkeypatch, tmp_path):
+    rc = only(run(monkeypatch, tmp_path, PagedStatuses(truncate=True))[1])["required_checks"]
+    assert rc["status"] == "unknown" and rc["reason"] == "statuses_truncated"
+
+
 class MovingHead(Api):
     """The PR head changes after the first PR read (a push mid-collection)."""
 

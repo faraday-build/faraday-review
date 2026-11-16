@@ -112,7 +112,7 @@
                   "additionalProperties": false,
                   "required": ["context", "app_id", "conclusion", "check_run_id", "evidence_kind"],
                   "properties": {
-                    "evidence_kind": { "enum": ["check_run", "status", null] },
+                    "evidence_kind": { "enum": ["check_run", "status", "check_run+status", null] },
                     "context": { "type": "string" },
                     "app_id": { "type": ["integer", "null"] },
                     "conclusion": { "type": ["string", "null"] },
