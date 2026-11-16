@@ -364,3 +364,54 @@ def test_label_after_push_but_before_shadow_run_binds_to_the_new_head():
     assert pr(r, 1)["founder_answer"]["class"] == "red"
     # Without the push evidence the same label predates the head's run: ignored.
     assert pr(w.run(), 1)["founder_answer"]["status"] == "none"
+
+
+def test_class_and_escalation_come_from_the_latest_qualifying_occurrence():
+    """Codex P2 r2 (#19): older qualifying green, later qualifying red (no
+    escalation recorded as True), newest green under an unreleased digest.
+    Readiness's representative says green; v5 must score the qualifying red
+    occurrence, with its own escalation value."""
+    w = World().add(1, cls="green", tier="A0")
+    led = w.ledger()
+    run = led["entries"][0]["runs"][0]
+    base = run["occurrence_log"][0]
+    run["occurrence_log"] = [
+        dict(base, classifier_class="green", created_at="2026-11-15T01:00:00Z", event_key="a", escalated=False),
+        dict(base, classifier_class="red", created_at="2026-11-15T02:00:00Z", event_key="b", escalated=False),
+    ]
+    led["entries"][0]["runs"].append({
+        "occurrence_log": [dict(base, classifier_class="green", created_at="2026-11-15T03:00:00Z",
+                                event_key="c", escalated=False)],
+        "policy_digest_verified": True, "policy_bundle_digest": "sha256:" + "e" * 64})
+    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS,
+                         founder_node_id=FOUNDER, evidence={})
+    assert pr(r, 1)["faraday_class"] == "red"
+    assert pr(r, 1)["escalated"] is False
+
+
+def test_no_qualifying_occurrence_keeps_escalation_unknown():
+    w = World().add(1, cls="red")
+    led = w.ledger()
+    led["entries"][0]["runs"][0]["policy_bundle_digest"] = "sha256:" + "e" * 64
+    r = qualification_v5(w.readiness(), led, w.reference(), generated_at=TS,
+                         founder_node_id=FOUNDER, evidence={})
+    assert pr(r, 1)["escalated"] is None and pr(r, 1)["faraday_class"] == "red"
+
+
+@pytest.mark.parametrize("field,value", [("codex", "absent"), ("checks", "unknown")])
+def test_member_turning_unknown_does_not_reroll_other_windows(field, value):
+    """Codex P2 r2 (#19): windows stay anchored to arrival identity; a member
+    whose reference becomes unknown stays in its window, ineligible."""
+    def world(change):
+        w = World()
+        for n in range(1, 21):
+            kw = {"cls": "green", "tier": "A0"} if n % 4 == 0 else {}
+            if change and n == 2:
+                kw[field] = value
+            w.add(n, **kw)
+        return w.run()
+    base, changed = world(False), world(True)
+    strip = lambda ws: [(x["index"], x["seed"], x["members"], x["sampled"]) for x in ws]
+    assert strip(changed["windows"]) == strip(base["windows"])
+    assert len(changed["windows"]) == 4
+    assert pr(changed, 2)["verification"] == "reference_unknown"

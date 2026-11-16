@@ -64,13 +64,16 @@ def _key(repository: str, pr: int) -> tuple[str, int]:
     return (repo_identity(repository), int(pr))
 
 
-def _escalated(ledger: dict[str, Any], repository: str, pr: int, head: str, cls: str,
-               released: list[str] | None) -> bool | None:
-    """Faraday's recorded escalation on the latest *qualifying* occurrence of
-    the current-head entry with the counted class: identity-eligible,
-    completed, fresh and free of every v4 qualification exclusion (policy
-    digest, blocking-reason category), exactly as readiness judges it
-    (Codex P2, #19). None if not recorded."""
+def _latest_qualifying(ledger: dict[str, Any], repository: str, pr: int, head: str,
+                       released: list[str] | None) -> tuple[str | None, bool | None]:
+    """Classification and recorded escalation, taken together from the
+    latest *qualifying* occurrence of the current-head entry:
+    identity-eligible, completed, fresh and free of every v4 qualification
+    exclusion (policy digest, blocking-reason category), exactly as
+    readiness judges it (Codex P2, #19). Both values come from the same
+    occurrence, so a newer non-qualifying run cannot lend its class to an
+    older qualifying one (Codex P2 r2, #19). (None, None) if no qualifying
+    occurrence exists; escalation is None if not recorded as a boolean."""
     best = None
     for entry in ledger["entries"]:
         if _key(entry["repository"], entry["pr_number"]) != _key(repository, pr) or \
@@ -79,15 +82,16 @@ def _escalated(ledger: dict[str, Any], repository: str, pr: int, head: str, cls:
         for run in entry["runs"]:
             for occ in run["occurrence_log"]:
                 if (occ.get("eligible") and occ.get("final_status") == "completed"
-                        and occ.get("stale_state") == "fresh" and occ.get("classifier_class") == cls
+                        and occ.get("stale_state") == "fresh"
+                        and occ.get("classifier_class") in CLASS_ORDER
                         and not _occurrence_exclusions(occ, run.get("policy_digest_verified", False),
                                                        run.get("policy_bundle_digest"), released)):
                     rank = (str(occ.get("created_at")), str(occ.get("event_key")))
                     if best is None or rank > best[0]:
-                        best = (rank, occ.get("escalated"))
-    if best is None or not isinstance(best[1], bool):
-        return None
-    return best[1]
+                        best = (rank, occ.get("classifier_class"), occ.get("escalated"))
+    if best is None:
+        return None, None
+    return best[1], best[2] if isinstance(best[2], bool) else None
 
 
 def _seen_at(h: dict[str, Any]) -> str | None:
@@ -213,14 +217,15 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
         k = _key(c["repository"], c["pr_number"])
         ref = refs.get(k)
         view = _reference_view(ref, c["head_sha"])
-        cls = c["classifier_class"]
+        q_cls, q_escalated = _latest_qualifying(ledger, c["repository"], c["pr_number"], c["head_sha"],
+                                                readiness.get("gate", {}).get("released_policy_digests"))
+        cls = q_cls if q_cls is not None else c["classifier_class"]
         heads = ref["heads"] if ref else []
         first_seen = min((h["first_created_at"] for h in heads if h["first_created_at"]), default=None)
         items.append({
             "repository": c["repository"], "pr_number": int(c["pr_number"]), "head_sha": c["head_sha"],
             "faraday_class": cls,
-            "escalated": _escalated(ledger, c["repository"], c["pr_number"], c["head_sha"], cls,
-                                    readiness.get("gate", {}).get("released_policy_digests")),
+            "escalated": q_escalated,
             "reference": view,
             "exceptions": _exceptions(cls, view),
             "founder_answer": (founder_answer(ref, c["head_sha"], founder_node_id) if ref
@@ -230,8 +235,11 @@ def qualification_v5(readiness: dict[str, Any], ledger: dict[str, Any], referenc
             "_first_seen": first_seen or "",
         })
 
-    # Sampling over known-reference candidates, in arrival order.
-    candidates = sorted((i for i in items if i["reference"]["status"] == "known"),
+    # Sampling over every qualifying PR in arrival order. A member whose
+    # reference is unknown stays in its window (it is ineligible for
+    # verification, not removed), so a later push or a missing receipt on one
+    # PR never shifts windows or re-rolls seeds for others (Codex P2 r2, #19).
+    candidates = sorted(items,
                         key=lambda i: (i["_first_seen"], repo_identity(i["repository"]), i["pr_number"]))
     windows = []
     for w in range(len(candidates) // WINDOW + (1 if len(candidates) % WINDOW else 0)):
