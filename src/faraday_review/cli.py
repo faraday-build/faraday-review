@@ -67,6 +67,7 @@ from .telemetry.monitor import (
     monitor_notify,
     monitor_report,
 )
+from .telemetry.qualification_v5 import qualification_v5
 from .telemetry.reference_tier import ReferencePolicyError
 from .telemetry.throughput import compute_throughput
 from .telemetry.writer import append_event, read_events
@@ -654,6 +655,48 @@ def _cmd_reference(args) -> int:
     return code
 
 
+def _cmd_qualification_v5(args) -> int:
+    """QA-1 proposed gate v5 (pure; no network, no clock). Never authoritative
+    while QA-1 is not adopted; the v4 readiness gate is unchanged."""
+    paths = {"readiness": Path(args.readiness), "ledger": Path(args.ledger),
+             "reference": Path(args.reference)}
+    try:
+        docs = {k: json.loads(p.read_text(encoding="utf-8")) for k, p in paths.items()}
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"qualification-v5: cannot read inputs: {exc}", file=sys.stderr)
+        return 2
+    frozen, frozen_status = None, args.frozen_status
+    if args.frozen:
+        if frozen_status != "loaded":
+            print("qualification-v5: --frozen requires --frozen-status loaded", file=sys.stderr)
+            return 2
+        try:
+            frozen = json.loads(Path(args.frozen).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            frozen, frozen_status = None, "unavailable"   # fail closed: sampling cannot pass
+    elif frozen_status == "loaded":
+        print("qualification-v5: --frozen-status loaded requires --frozen", file=sys.stderr)
+        return 2
+    try:
+        report = qualification_v5(
+            docs["readiness"], docs["ledger"], docs["reference"], generated_at=args.generated_at,
+            founder_node_id=args.founder_node_id, threshold=args.threshold,
+            frozen=frozen, frozen_status=frozen_status,
+            evidence={k: hashlib.sha256(p.read_bytes()).hexdigest() for k, p in sorted(paths.items())})
+    except (QualificationError, KeyError, TypeError, ValueError) as exc:
+        print(f"qualification-v5: invalid_input: {exc}", file=sys.stderr)
+        return 2
+    code = _write_validated(Path(args.output), report, "qualification-v5", "qualification-v5",
+                            enrollment=args.enrollment, public_check=True)
+    if code == 0:
+        c, g = report["counts"], report["gate"]["conditions"]
+        print(f"qualification-v5 (PROPOSED, not authoritative): verified={c['verified']}/"
+              f"{report['threshold']} green={c['verified_green']} exceptions_open={c['exception_open']} "
+              f"samples_pending={c['sample_pending']} reference_unknown={c['reference_unknown']} "
+              f"escalation={g['escalation']['status']} met={report['gate']['met']}", file=sys.stderr)
+    return code
+
+
 def _cmd_preflight(args) -> int:
     """Read-only activation checks; exit 1 listing every gap."""
     if not _REPOSITORY_RE.match(args.repo):
@@ -864,6 +907,21 @@ def main(argv: list[str] | None = None) -> int:
     ref.add_argument("--token-env", default="GITHUB_TOKEN")
     ref.add_argument("--max-requests", type=_positive_int, default=2000)
 
+    v5 = sub.add_parser("qualification-v5",
+                        help="QA-1 proposed gate v5 report (pure; not authoritative until adopted)")
+    v5.add_argument("--readiness", required=True)
+    v5.add_argument("--ledger", required=True)
+    v5.add_argument("--reference", required=True)
+    v5.add_argument("--generated-at", required=True, help="explicit ISO-8601 timestamp; no clock is read")
+    v5.add_argument("--output", required=True)
+    v5.add_argument("--founder-node-id", default=DEFAULT_FOUNDER_NODE_ID)
+    v5.add_argument("--threshold", type=int, default=GATE_THRESHOLD_FLOOR)
+    v5.add_argument("--enrollment", default=None)
+    v5.add_argument("--frozen", default=None,
+                    help="verified frozen closed-window record (qualification-v5-frozen/v1)")
+    v5.add_argument("--frozen-status", default="none", choices=("none", "loaded", "unavailable", "invalid"),
+                    help="none = no prior record (first run); unavailable/invalid fail closed")
+
     pre = sub.add_parser("preflight", help="read-only activation checks for one caller repo")
     pre.add_argument("--repo", required=True)
     pre.add_argument("--workflow", default=".github/workflows/faraday-review.yml")
@@ -947,6 +1005,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_preflight(args)
     if args.command == "reference":
         return _cmd_reference(args)
+    if args.command == "qualification-v5":
+        return _cmd_qualification_v5(args)
     if args.command == "throughput":
         metrics = compute_throughput(list(read_events(Path(args.artifacts_dir))))
         write_canonical(Path(args.artifacts_dir) / "throughput.json", metrics)
